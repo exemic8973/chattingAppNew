@@ -7,8 +7,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install ALL dependencies (need dev deps for vite build)
-RUN npm install
+# Install ALL dependencies using npm ci (more reliable in Docker)
+# npm ci installs from lockfile and includes devDependencies by default
+RUN npm ci
 
 # Copy all source code
 COPY . .
