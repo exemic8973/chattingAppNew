@@ -109,8 +109,9 @@ app.get('/api/search', async (req, res) => {
 });
 
 // Catch-all route to serve frontend in production (must be after all API routes)
+// Express 5.x compatible syntax
 if (isProduction) {
-    app.get('*', (req, res) => {
+    app.use((req, res) => {
         const distDir = path.join(__dirname, '..', 'dist');
         res.sendFile(path.join(distDir, 'index.html'));
     });
