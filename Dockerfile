@@ -1,5 +1,5 @@
-# Use Node.js LTS version
-FROM node:20-slim
+# Use Node.js LTS version (full image, not slim)
+FROM node:20
 
 # Set working directory
 WORKDIR /app
@@ -7,15 +7,18 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install ALL dependencies using npm ci (more reliable in Docker)
-# npm ci installs from lockfile and includes devDependencies by default
+# Install ALL dependencies (including devDependencies for build)
 RUN npm ci
+
+# Verify vite is installed
+RUN ls -la node_modules/.bin/vite || echo "Vite not found in node_modules/.bin"
+RUN npm list vite || echo "Vite not in npm list"
 
 # Copy all source code
 COPY . .
 
-# Build the frontend
-RUN npm run build
+# Build the frontend using npx to ensure vite is found
+RUN npx vite build
 
 # Remove dev dependencies to reduce image size
 RUN npm prune --omit=dev
