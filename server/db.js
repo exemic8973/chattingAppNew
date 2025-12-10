@@ -12,9 +12,23 @@ let pgPool;
 export async function initializeDatabase() {
     if (isProduction) {
         // Production: Use PostgreSQL
-        const databaseUrl = process.env.DATABASE_URL;
+        // Try DATABASE_URL first, then construct from individual variables
+        let databaseUrl = process.env.DATABASE_URL;
+
         if (!databaseUrl) {
-            throw new Error('DATABASE_URL environment variable is required in production');
+            // Construct from Zeabur's PostgreSQL environment variables
+            const host = process.env.POSTGRES_HOST;
+            const port = process.env.POSTGRES_PORT || '5432';
+            const user = process.env.POSTGRES_USER;
+            const password = process.env.POSTGRES_PASSWORD;
+            const database = process.env.POSTGRES_DATABASE;
+
+            if (host && user && password && database) {
+                databaseUrl = `postgresql://${user}:${password}@${host}:${port}/${database}`;
+                console.log('Constructed DATABASE_URL from POSTGRES_* variables');
+            } else {
+                throw new Error('DATABASE_URL or POSTGRES_* environment variables are required in production');
+            }
         }
 
         pgPool = new Pool({
