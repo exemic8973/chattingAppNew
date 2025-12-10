@@ -7,11 +7,17 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (including production dependencies)
-RUN npm install --omit=dev
+# Install ALL dependencies (need dev deps for vite build)
+RUN npm install
 
-# Copy server code
-COPY server/ ./server/
+# Copy all source code
+COPY . .
+
+# Build the frontend
+RUN npm run build
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --omit=dev
 
 # Expose port (Zeabur will set this via PORT env variable)
 EXPOSE 3001

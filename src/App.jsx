@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -10,8 +10,14 @@ import SearchModal from './components/SearchModal';
 import { initialData, initialUsers } from './data';
 
 // Connect to backend
-const socket = io(`https://${window.location.hostname}:3001`, {
-  secure: true,
+// In production (Zeabur), use same origin. In development, use localhost:3001
+const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const socketUrl = isDevelopment
+  ? `https://${window.location.hostname}:3001`
+  : window.location.origin;
+
+const socket = io(socketUrl, {
+  secure: !isDevelopment,
   rejectUnauthorized: false
 });
 
@@ -34,6 +40,7 @@ function App() {
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
   const [isVoiceCall, setIsVoiceCall] = useState(false);
   const [typingUsers, setTypingUsers] = useState(new Set());
+  const chatAreaRef = useRef(null);
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
   // Channel might be null if we are in DM mode
@@ -355,6 +362,7 @@ function App() {
           isHost={selectedChannel?.host === username}
         />
         <ChatArea
+          ref={chatAreaRef}
           messages={displayMessages}
           onSendMessage={handleSendMessage}
           typingUsers={Array.from(typingUsers)}
@@ -418,7 +426,10 @@ function App() {
           onClose={() => setShowSearchModal(false)}
           onSelectMessage={(msg) => {
             setShowSearchModal(false);
-            // Could scroll to message in future
+            // Scroll to the selected message
+            if (chatAreaRef.current) {
+              chatAreaRef.current.scrollToMessage(msg.id);
+            }
           }}
         />
       )}

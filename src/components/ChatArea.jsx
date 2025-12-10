@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useImperativeHandle } from 'react';
 import Message from './Message';
 
-const ChatArea = ({ messages, onSendMessage, typingUsers = [], onTyping, onStopTyping, onLoadMore, onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser }) => {
+const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], onTyping, onStopTyping, onLoadMore, onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser }, ref) => {
     const [inputValue, setInputValue] = useState('');
     const messagesEndRef = useRef(null);
     const messagesListRef = useRef(null);
@@ -10,10 +10,25 @@ const ChatArea = ({ messages, onSendMessage, typingUsers = [], onTyping, onStopT
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const previousHeightRef = useRef(0);
+    const messageRefs = useRef({});
+    const [highlightedMessageId, setHighlightedMessageId] = useState(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
+
+    // Expose scrollToMessage method to parent
+    useImperativeHandle(ref, () => ({
+        scrollToMessage: (messageId) => {
+            const messageElement = messageRefs.current[messageId];
+            if (messageElement) {
+                messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                setHighlightedMessageId(messageId);
+                // Remove highlight after 2 seconds
+                setTimeout(() => setHighlightedMessageId(null), 2000);
+            }
+        }
+    }));
 
     // Auto-scroll to bottom only on NEW messages at the bottom, or initial load?
     // If we loaded OLDER messages, we should NOT scroll to bottom.
@@ -134,6 +149,7 @@ const ChatArea = ({ messages, onSendMessage, typingUsers = [], onTyping, onStopT
                 {messages.map(msg => (
                     <Message
                         key={msg.id}
+                        ref={(el) => messageRefs.current[msg.id] = el}
                         messageId={msg.id}
                         text={msg.text}
                         isOwn={msg.isOwn}
@@ -145,6 +161,7 @@ const ChatArea = ({ messages, onSendMessage, typingUsers = [], onTyping, onStopT
                         onDelete={onDelete}
                         onEdit={onEdit}
                         currentUser={currentUser}
+                        highlighted={msg.id === highlightedMessageId}
                     />
                 ))}
                 {typingUsers.length > 0 && (
@@ -194,7 +211,9 @@ const ChatArea = ({ messages, onSendMessage, typingUsers = [], onTyping, onStopT
             </div>
         </div>
     );
-};
+});
+
+ChatArea.displayName = 'ChatArea';
 
 export default ChatArea;
 

@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
 
-const Message = ({ text, isOwn, sender, time, messageId, reactions = [], onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser }) => {
+const Message = React.forwardRef(({ text, isOwn, sender, time, messageId, reactions = [], onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser, highlighted }, ref) => {
     const [showPicker, setShowPicker] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
@@ -53,10 +53,16 @@ const Message = ({ text, isOwn, sender, time, messageId, reactions = [], onAddRe
 
     return (
         <div
+            ref={ref}
             className={`message ${isOwn ? 'own' : ''}`}
             onMouseEnter={() => isOwn && setShowMenu(true)}
             onMouseLeave={() => setShowMenu(false)}
-            style={{ position: 'relative' }}
+            style={{
+                position: 'relative',
+                backgroundColor: highlighted ? 'rgba(108, 99, 255, 0.2)' : undefined,
+                transition: 'background-color 0.5s ease',
+                scrollMarginTop: '80px'
+            }}
         >
             {/* Message actions menu for own messages */}
             {isOwn && showMenu && !isEditing && (
@@ -206,6 +212,8 @@ const Message = ({ text, isOwn, sender, time, messageId, reactions = [], onAddRe
             </div>
         </div>
     );
-};
+});
+
+Message.displayName = 'Message';
 
 export default Message;
