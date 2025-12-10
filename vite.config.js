@@ -7,10 +7,13 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
-    https: {
-      key: fs.readFileSync('./key.pem'),
-      cert: fs.readFileSync('./cert.pem'),
-    },
+    // Only use HTTPS if certificate files exist (local development)
+    https: fs.existsSync('./key.pem') && fs.existsSync('./cert.pem')
+      ? {
+          key: fs.readFileSync('./key.pem'),
+          cert: fs.readFileSync('./cert.pem'),
+        }
+      : undefined,
     proxy: {
       '/api': {
         target: 'https://localhost:3001',
