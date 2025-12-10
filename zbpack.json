@@ -1,4 +1,3 @@
 {
-  "build_command": "echo 'No build needed - backend only'",
-  "start_command": "npm run start:prod"
+  "app_type": "nodejs"
 }
