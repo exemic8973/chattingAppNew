@@ -26,6 +26,12 @@ if (!fs.existsSync(uploadsDir)) {
 // Serve uploaded files statically
 app.use('/uploads', express.static(uploadsDir));
 
+// Serve static frontend files in production
+if (isProduction) {
+    const distDir = path.join(__dirname, '..', 'dist');
+    app.use(express.static(distDir));
+}
+
 // Configure multer for file storage
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -101,6 +107,14 @@ app.get('/api/search', async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
+
+// Catch-all route to serve frontend in production (must be after all API routes)
+if (isProduction) {
+    app.get('*', (req, res) => {
+        const distDir = path.join(__dirname, '..', 'dist');
+        res.sendFile(path.join(distDir, 'index.html'));
+    });
+}
 
 // Use HTTP in production (Zeabur handles SSL), HTTPS in development
 let server;
