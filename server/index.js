@@ -1,5 +1,6 @@
 import express from 'express';
-import { createServer } from 'https';
+import { createServer as createHttpsServer } from 'https';
+import { createServer as createHttpServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import fs from 'fs';
@@ -11,6 +12,7 @@ import { setupSocket } from './socket.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const isProduction = process.env.NODE_ENV === 'production';
 
 const app = express();
 app.use(cors());
@@ -100,12 +102,17 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-const httpsOptions = {
-    key: fs.readFileSync('key.pem'),
-    cert: fs.readFileSync('cert.pem')
-};
-
-const server = createServer(httpsOptions, app);
+// Use HTTP in production (Zeabur handles SSL), HTTPS in development
+let server;
+if (isProduction) {
+    server = createHttpServer(app);
+} else {
+    const httpsOptions = {
+        key: fs.readFileSync('key.pem'),
+        cert: fs.readFileSync('cert.pem')
+    };
+    server = createHttpsServer(httpsOptions, app);
+}
 
 const io = new Server(server, {
     cors: {
@@ -119,9 +126,10 @@ initializeDatabase().then(() => {
     // Setup socket events after DB is ready
     setupSocket(io);
 
-    const PORT = 3001;
+    const PORT = process.env.PORT || 3001;
     server.listen(PORT, () => {
         console.log(`SERVER RUNNING ON PORT ${PORT}`);
+        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
 }).catch(err => {
     console.error("Failed to initialize database:", err);

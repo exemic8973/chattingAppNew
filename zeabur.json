@@ -1,0 +1,14 @@
+{
+  "name": "chatting-app-production",
+  "version": "1.0.0",
+  "build": {
+    "buildCommand": "npm install",
+    "outputDirectory": "."
+  },
+  "run": {
+    "startCommand": "npm run start:prod"
+  },
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
