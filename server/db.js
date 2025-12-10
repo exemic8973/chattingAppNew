@@ -31,11 +31,15 @@ export async function initializeDatabase() {
             }
         }
 
+        // Determine SSL configuration
+        // Some PostgreSQL servers (like Zeabur) don't support SSL
+        const sslConfig = process.env.DATABASE_SSL === 'true'
+            ? { rejectUnauthorized: false }
+            : false;
+
         pgPool = new Pool({
             connectionString: databaseUrl,
-            ssl: {
-                rejectUnauthorized: false
-            }
+            ssl: sslConfig
         });
 
         // Create tables for PostgreSQL
