@@ -7,12 +7,18 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install ALL dependencies (including devDependencies for build)
-RUN npm ci
+# Debug: List copied files
+RUN ls -la package*.json
 
-# Verify vite is installed
-RUN ls -la node_modules/.bin/vite || echo "Vite not found in node_modules/.bin"
-RUN npm list vite || echo "Vite not in npm list"
+# Debug: Show npm and node versions
+RUN node --version && npm --version
+
+# Install ALL dependencies (including devDependencies for build)
+RUN npm ci --verbose
+
+# Debug: Check what was installed
+RUN ls -la node_modules/ | head -20
+RUN npm list --depth=0
 
 # Copy all source code
 COPY . .
