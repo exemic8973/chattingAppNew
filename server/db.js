@@ -113,26 +113,23 @@ export async function initializeDatabase() {
         console.log("PostgreSQL Database initialized");
 
         // Create a wrapper to match SQLite API
+        // Convert SQLite ? placeholders to PostgreSQL $1, $2, $3...
         db = {
             run: async (sql, ...params) => {
-                const pgSql = sql.replace(/\?/g, (_, i) => `$${params.findIndex((_, idx) => idx === i) + 1}`);
-                let actualSql = pgSql;
                 let paramIndex = 1;
-                actualSql = pgSql.replace(/\?/g, () => `$${paramIndex++}`);
-                await pgPool.query(actualSql, params);
+                const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+                await pgPool.query(pgSql, params);
             },
             get: async (sql, ...params) => {
-                let actualSql = sql;
                 let paramIndex = 1;
-                actualSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
-                const result = await pgPool.query(actualSql, params);
+                const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+                const result = await pgPool.query(pgSql, params);
                 return result.rows[0];
             },
             all: async (sql, ...params) => {
-                let actualSql = sql;
                 let paramIndex = 1;
-                actualSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
-                const result = await pgPool.query(actualSql, params);
+                const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+                const result = await pgPool.query(pgSql, params);
                 return result.rows;
             }
         };
