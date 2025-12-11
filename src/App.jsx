@@ -28,6 +28,19 @@ function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
 
+  // Restore session from localStorage on mount
+  useEffect(() => {
+    const savedUsername = localStorage.getItem('chatAppUsername');
+    const savedAvatar = localStorage.getItem('chatAppAvatar');
+    if (savedUsername) {
+      setUsername(savedUsername);
+      setIsLoggedIn(true);
+      if (savedAvatar) {
+        setUserAvatar(savedAvatar);
+      }
+    }
+  }, []);
+
   // Keep teams structure for navigation, but messages will come from socket
   const [teams, setTeams] = useState(initialData.teams);
   const [users, setUsers] = useState(initialUsers);
@@ -203,6 +216,21 @@ function App() {
   const handleLogin = (user) => {
     setUsername(user);
     setIsLoggedIn(true);
+    // Save session to localStorage
+    localStorage.setItem('chatAppUsername', user);
+  };
+
+  const handleLogout = () => {
+    setUsername("");
+    setIsLoggedIn(false);
+    setUserAvatar(null);
+    // Clear session from localStorage
+    localStorage.removeItem('chatAppUsername');
+    localStorage.removeItem('chatAppAvatar');
+    // Disconnect socket
+    socket.disconnect();
+    // Reconnect for next login
+    socket.connect();
   };
 
   const handleChannelSelect = (teamId, channelId) => {
@@ -356,6 +384,7 @@ function App() {
           onKickUser={handleKickUser}
           onSearch={() => setShowSearchModal(true)}
           onProfile={() => setShowProfileModal(true)}
+          onLogout={handleLogout}
           userAvatar={userAvatar}
           username={username}
           isChannel={!selectedUserId}
@@ -415,6 +444,8 @@ function App() {
           onClose={() => setShowProfileModal(false)}
           onAvatarUpdate={(url) => {
             setUserAvatar(url);
+            // Save avatar to localStorage
+            localStorage.setItem('chatAppAvatar', url);
             setShowProfileModal(false);
           }}
         />
