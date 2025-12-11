@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 
 const Login = ({ socket, onJoin }) => {
+    const { t } = useI18n();
     const [isSignup, setIsSignup] = useState(false);
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -36,7 +38,7 @@ const Login = ({ socket, onJoin }) => {
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!username.trim() || !password.trim()) {
-            alert("Please enter both username and password");
+            alert(t('auth.enterBoth'));
             return;
         }
 
@@ -55,10 +57,10 @@ const Login = ({ socket, onJoin }) => {
                         💬
                     </div>
                     <h1 className="login-title">
-                        {isSignup ? 'Create Account' : 'Welcome Back'}
+                        {isSignup ? t('auth.createAccount') : t('auth.welcomeBack')}
                     </h1>
                     <p className="login-subtitle">
-                        {isSignup ? 'Join the community today' : 'Enter your details to access your account'}
+                        {isSignup ? t('auth.joinCommunity') : t('auth.enterDetails')}
                     </p>
                 </div>
 
@@ -66,7 +68,7 @@ const Login = ({ socket, onJoin }) => {
                     <div className="input-group">
                         <input
                             type="text"
-                            placeholder="Username"
+                            placeholder={t('auth.username')}
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             className="login-input"
@@ -75,7 +77,7 @@ const Login = ({ socket, onJoin }) => {
                     <div className="input-group">
                         <input
                             type="password"
-                            placeholder="Password"
+                            placeholder={t('auth.password')}
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             className="login-input"
@@ -83,17 +85,17 @@ const Login = ({ socket, onJoin }) => {
                     </div>
 
                     <button type="submit" className="login-button">
-                        {isSignup ? 'Sign Up' : 'Sign In'}
+                        {isSignup ? t('auth.signup') : t('auth.login')}
                     </button>
 
                     <div className="login-footer">
-                        {isSignup ? 'Already have an account?' : "Don't have an account?"}{' '}
+                        {isSignup ? t('auth.alreadyHaveAccount') : t('auth.dontHaveAccount')}{' '}
                         <button
                             type="button"
                             onClick={() => setIsSignup(!isSignup)}
                             className="toggle-auth-button"
                         >
-                            {isSignup ? 'Login' : 'Sign Up'}
+                            {isSignup ? t('auth.login') : t('auth.signup')}
                         </button>
                     </div>
                 </form>

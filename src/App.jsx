@@ -8,6 +8,7 @@ import VideoCall from './components/VideoCall';
 import ProfileModal from './components/ProfileModal';
 import SearchModal from './components/SearchModal';
 import ChannelMembers from './components/ChannelMembers';
+import InviteUserModal from './components/InviteUserModal';
 import { initialData, initialUsers } from './data';
 
 // Connect to backend
@@ -28,6 +29,7 @@ function App() {
   const [userAvatar, setUserAvatar] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
 
   // Restore session from localStorage on mount
   useEffect(() => {
@@ -162,11 +164,11 @@ function App() {
       );
     });
 
-    socket.on("kicked_from_channel", ({ channelId, by }) => {
-      alert(`You were kicked from the channel by ${by}`);
-      const defaultChannelId = teams[0]?.channels[0]?.id || 'c1';
-      setSelectedChannelId(defaultChannelId);
-      socket.emit("join_channel", { username, channelId: defaultChannelId });
+    socket.on("kicked_from_channel", ({ redirectTo }) => {
+      // Auto-move to the redirect channel (no confirmation needed)
+      const targetChannelId = redirectTo || 'c1';
+      setSelectedChannelId(targetChannelId);
+      socket.emit("join_channel", { username, channelId: targetChannelId });
     });
 
     socket.on("join_channel_success", (channelId) => {
@@ -193,19 +195,23 @@ function App() {
     });
 
     socket.on("invitation_received", (data) => {
+      const { channelId } = data;
+      // Auto-join without confirmation (as per requirements)
+      socket.emit("join_channel_request", { channelId, passcode: null, username });
+    });
+
+    socket.on("host_assist_invitation_received", (data) => {
       const { from, channelName, channelId } = data;
-      const accept = confirm(`${from} invited you to join #${channelName}. Accept?`);
-      if (accept) {
-        // We need to know the team ID to select it properly in UI, but for now we just join.
-        // If it has a passcode, we might fail if we don't prompt? 
-        // Ideally invite bypasses passcode or we prompt.
-        // Let's try to join directly, if it fails due to passcode, the error will trigger.
-        // But wait, if we just emit join_channel_request with null passcode, it might fail.
-        // Let's assume invite implies knowing the passcode or bypass? 
-        // For now, let's just try to join. If it fails, user will see error.
-        // Better: Prompt for passcode if needed? Or just let them click the channel in list.
-        // Let's just select the channel in UI if possible, or just emit join request.
-        socket.emit("join_channel_request", { channelId, passcode: null, username });
+      const accept = confirm(`${from} invited you to be a host-assist in #${channelName}. Accept?`);
+      socket.emit("respond_host_assist", { channelId, username, accepted: accept });
+    });
+
+    socket.on("channel_deleted", ({ channelId }) => {
+      // Channel was deleted, move to default channel
+      const defaultChannelId = 'c1';
+      if (selectedChannelId === channelId) {
+        setSelectedChannelId(defaultChannelId);
+        socket.emit("join_channel", { username, channelId: defaultChannelId });
       }
     });
 
@@ -234,6 +240,8 @@ function App() {
       socket.off("join_channel_error");
       socket.off("call_received");
       socket.off("invitation_received");
+      socket.off("host_assist_invitation_received");
+      socket.off("channel_deleted");
       socket.off("connect", handleReconnect);
     };
   }, [username, selectedChannelId]); // Add dependencies to ensure we have latest state on connect
@@ -300,7 +308,10 @@ function App() {
       alert("You can only invite users to channels.");
       return;
     }
-    const targetUser = prompt("Enter username to invite:");
+    setShowInviteModal(true);
+  };
+
+  const handleInviteUserConfirm = (targetUser) => {
     if (targetUser) {
       socket.emit("invite_user", {
         targetUsername: targetUser.trim(),
@@ -342,6 +353,28 @@ function App() {
         channelId: selectedChannelId,
         targetUsername: targetUsername,
         currentHost: username
+      });
+    }
+  };
+
+  const handleMakeHostAssist = (targetUsername) => {
+    if (!selectedChannelId) return;
+    if (confirm(`Invite ${targetUsername} to be a host-assist?`)) {
+      socket.emit("invite_host_assist", {
+        channelId: selectedChannelId,
+        channelName: selectedChannel?.name || 'channel',
+        targetUsername: targetUsername,
+        fromUsername: username
+      });
+    }
+  };
+
+  const handleDeleteChannel = () => {
+    if (!selectedChannelId) return;
+    if (confirm(`Are you sure you want to delete #${selectedChannel?.name}? This action cannot be undone.`)) {
+      socket.emit("delete_channel", {
+        channelId: selectedChannelId,
+        username: username
       });
     }
   };
@@ -429,6 +462,7 @@ function App() {
             }
           }}
           onKickUser={handleKickUser}
+          onDeleteChannel={handleDeleteChannel}
           onSearch={() => setShowSearchModal(true)}
           onProfile={() => setShowProfileModal(true)}
           onLogout={handleLogout}
@@ -489,8 +523,10 @@ function App() {
           members={channelMembers}
           currentUser={username}
           isHost={selectedChannel?.host === username}
+          isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
           onKickUser={handleKickUserFromMembers}
           onMakeHost={handleMakeHost}
+          onMakeHostAssist={handleMakeHostAssist}
         />
       )}
 
@@ -519,6 +555,14 @@ function App() {
               chatAreaRef.current.scrollToMessage(msg.id);
             }
           }}
+        />
+      )}
+
+      {showInviteModal && (
+        <InviteUserModal
+          users={users}
+          onClose={() => setShowInviteModal(false)}
+          onInvite={handleInviteUserConfirm}
         />
       )}
     </div>

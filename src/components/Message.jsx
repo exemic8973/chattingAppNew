@@ -3,11 +3,24 @@ import ReactMarkdown from 'react-markdown';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
 
-const Message = React.forwardRef(({ text, isOwn, sender, time, messageId, reactions = [], onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser, highlighted }, ref) => {
+const Message = React.forwardRef(({ text, isOwn, sender, time, messageId, reactions = [], onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser, highlighted, isSystem }, ref) => {
     const [showPicker, setShowPicker] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [editText, setEditText] = useState(text);
+
+    // System messages have special styling
+    if (isSystem || sender === 'System') {
+        return (
+            <div ref={ref} className="message system-message">
+                <div className="system-message-content">
+                    <span className="system-icon">ℹ️</span>
+                    <span className="system-text">{text}</span>
+                    <span className="system-time">{time}</span>
+                </div>
+            </div>
+        );
+    }
 
     // Group reactions by emoji
     const groupedReactions = reactions.reduce((acc, r) => {

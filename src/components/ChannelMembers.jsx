@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import './ChannelMembers.css';
 
-const ChannelMembers = ({ members, currentUser, isHost, onKickUser, onMakeHost }) => {
+const ChannelMembers = ({ members, currentUser, isHost, isHostAssist, onKickUser, onMakeHost, onMakeHostAssist }) => {
     const [selectedUser, setSelectedUser] = useState(null);
     const [showMenu, setShowMenu] = useState(false);
     const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
@@ -13,8 +13,8 @@ const ChannelMembers = ({ members, currentUser, isHost, onKickUser, onMakeHost }
             return;
         }
 
-        // Only host can manage other users
-        if (!isHost) {
+        // Only host or host-assist can manage other users
+        if (!isHost && !isHostAssist) {
             return;
         }
 
@@ -41,6 +41,11 @@ const ChannelMembers = ({ members, currentUser, isHost, onKickUser, onMakeHost }
                     onMakeHost(selectedUser.username);
                 }
                 break;
+            case 'makeHostAssist':
+                if (onMakeHostAssist) {
+                    onMakeHostAssist(selectedUser.username);
+                }
+                break;
             default:
                 break;
         }
@@ -63,9 +68,9 @@ const ChannelMembers = ({ members, currentUser, isHost, onKickUser, onMakeHost }
                     {members.map((member) => (
                         <div
                             key={member.username}
-                            className={`member-item ${isHost && member.username !== currentUser ? 'clickable' : ''}`}
+                            className={`member-item ${(isHost || isHostAssist) && member.username !== currentUser ? 'clickable' : ''}`}
                             onClick={(e) => handleUserClick(member, e)}
-                            title={isHost && member.username !== currentUser ? 'Click to manage user' : member.username}
+                            title={(isHost || isHostAssist) && member.username !== currentUser ? 'Click to manage user' : member.username}
                         >
                             <div className={`member-avatar-wrapper ${member.isTyping ? 'typing' : ''}`}>
                                 <div
@@ -83,6 +88,7 @@ const ChannelMembers = ({ members, currentUser, isHost, onKickUser, onMakeHost }
                                 <span className="member-name">
                                     {member.username}
                                     {member.isHost && <span className="host-badge">👑 Host</span>}
+                                    {member.isHostAssist && <span className="host-assist-badge">⭐ Host-Assist</span>}
                                     {member.username === currentUser && <span className="you-badge">(You)</span>}
                                 </span>
                                 <span className="member-status">
@@ -114,12 +120,24 @@ const ChannelMembers = ({ members, currentUser, isHost, onKickUser, onMakeHost }
                         >
                             👢 Kick User
                         </button>
-                        <button
-                            className="menu-item make-host"
-                            onClick={() => handleAction('makeHost')}
-                        >
-                            👑 Make Host
-                        </button>
+                        {isHost && (
+                            <>
+                                <button
+                                    className="menu-item make-host"
+                                    onClick={() => handleAction('makeHost')}
+                                >
+                                    👑 Make Host
+                                </button>
+                                {!selectedUser.isHostAssist && (
+                                    <button
+                                        className="menu-item make-host-assist"
+                                        onClick={() => handleAction('makeHostAssist')}
+                                    >
+                                        ⭐ Make Host-Assist
+                                    </button>
+                                )}
+                            </>
+                        )}
                         <button
                             className="menu-item cancel"
                             onClick={handleClickOutside}

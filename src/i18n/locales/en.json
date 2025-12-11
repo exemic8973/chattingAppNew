@@ -1,0 +1,83 @@
+{
+  "app": {
+    "name": "Chat App"
+  },
+  "auth": {
+    "login": "Login",
+    "signup": "Sign Up",
+    "username": "Username",
+    "password": "Password",
+    "logout": "Logout",
+    "loginButton": "Login",
+    "signupButton": "Create Account",
+    "alreadyHaveAccount": "Already have an account?",
+    "needAccount": "Need an account?"
+  },
+  "header": {
+    "search": "Search Messages",
+    "themeToggle": "Switch Theme",
+    "voiceCall": "Voice Call",
+    "videoCall": "Video Call",
+    "inviteUser": "Invite User",
+    "kickUser": "Kick User",
+    "leaveChannel": "Leave Channel",
+    "profileSettings": "Profile Settings"
+  },
+  "sidebar": {
+    "channels": "Channels",
+    "directMessages": "Direct Messages",
+    "createChannel": "Create Channel"
+  },
+  "chat": {
+    "typeMessage": "Type a message...",
+    "send": "Send",
+    "typing": "{user} is typing...",
+    "multipleTyping": "{users} are typing...",
+    "loadMore": "Load More Messages",
+    "noMessages": "No messages yet"
+  },
+  "members": {
+    "title": "Members",
+    "online": "online",
+    "typing": "typing...",
+    "hostBadge": "Host",
+    "youBadge": "(You)",
+    "manageUser": "Manage {user}",
+    "kickUser": "Kick User",
+    "makeHost": "Make Host",
+    "cancel": "Cancel"
+  },
+  "system": {
+    "joined": "{user} joined the channel",
+    "left": "{user} left the channel",
+    "disconnected": "{user} disconnected",
+    "kicked": "{user} was kicked by {by}",
+    "newHost": "{user} is now the host"
+  },
+  "dialogs": {
+    "confirmKick": "Are you sure you want to kick {user}?",
+    "confirmMakeHost": "Make {user} the host of this channel?",
+    "confirmLeave": "Are you sure you want to leave this channel?",
+    "enterChannelName": "Enter channel name:",
+    "enterPasscode": "Enter passcode (optional):",
+    "enterUsername": "Enter username to kick:",
+    "enterInviteUsername": "Enter username to invite:",
+    "enterChannelPasscode": "Enter passcode for channel:"
+  },
+  "profile": {
+    "title": "Profile Settings",
+    "changeAvatar": "Change Avatar",
+    "uploadImage": "Upload Image",
+    "close": "Close"
+  },
+  "search": {
+    "title": "Search Messages",
+    "placeholder": "Search...",
+    "noResults": "No results found"
+  },
+  "language": {
+    "title": "Language",
+    "english": "English",
+    "chinese": "简体中文"
+  }
+}

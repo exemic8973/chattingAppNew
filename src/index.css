@@ -547,3 +547,210 @@ body {
   text-decoration: underline;
   margin-left: 5px;
 }
+
+/* Responsive Design - Mobile & Tablet */
+
+/* Tablet (medium devices) */
+@media (max-width: 1024px) {
+  .channel-members {
+    width: 220px;
+  }
+
+  .sidebar {
+    width: 240px;
+  }
+
+  .message {
+    max-width: 75%;
+  }
+
+  .header-actions {
+    gap: 8px;
+  }
+
+  .header-actions button {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+  }
+
+  .user-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 0.85rem;
+  }
+}
+
+/* Mobile (small devices) */
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: var(--glass-border);
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+
+  .sidebar-header {
+    padding: 16px;
+  }
+
+  .sidebar-header h2 {
+    font-size: 1.2rem;
+  }
+
+  .sidebar-content {
+    padding: 12px;
+  }
+
+  .channel-members {
+    display: none;
+  }
+
+  .chat-area {
+    width: 100%;
+  }
+
+  .chat-header {
+    padding: 12px;
+  }
+
+  .channel-info h3 {
+    font-size: 1rem;
+  }
+
+  .header-actions {
+    gap: 6px;
+  }
+
+  .header-actions button,
+  .action-btn {
+    padding: 6px 10px;
+    font-size: 0.8rem;
+  }
+
+  .user-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 0.75rem;
+  }
+
+  .messages-list {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .message {
+    max-width: 85%;
+    font-size: 0.9rem;
+  }
+
+  .message-bubble {
+    padding: 10px 14px;
+    font-size: 0.9rem;
+  }
+
+  .message-input-container {
+    padding: 16px;
+    gap: 8px;
+  }
+
+  .message-input-container input {
+    padding: 12px 16px;
+    font-size: 0.9rem;
+  }
+
+  .message-input-container button {
+    padding: 0 18px;
+    font-size: 0.9rem;
+  }
+
+  .login-card {
+    padding: 40px 30px;
+    max-width: 90%;
+    margin: 20px;
+  }
+
+  .login-title {
+    font-size: 1.5rem;
+  }
+
+  .login-input {
+    padding: 14px;
+    font-size: 0.95rem;
+  }
+
+  .login-button {
+    padding: 14px;
+    font-size: 1rem;
+  }
+
+  .app-header {
+    height: 60px;
+    padding: 0 16px;
+  }
+
+  .channel-info h1 {
+    font-size: 1rem;
+  }
+}
+
+/* Small mobile devices */
+@media (max-width: 480px) {
+  .sidebar {
+    max-height: 35vh;
+  }
+
+  .header-actions button span {
+    display: none;
+  }
+
+  .header-actions .action-btn {
+    padding: 6px 8px;
+    font-size: 1.2rem;
+  }
+
+  .message {
+    max-width: 90%;
+  }
+
+  .message-bubble {
+    padding: 8px 12px;
+    font-size: 0.85rem;
+  }
+
+  .login-card {
+    padding: 30px 20px;
+  }
+
+  .login-icon {
+    width: 50px;
+    height: 50px;
+    font-size: 1.5rem;
+  }
+
+  .login-title {
+    font-size: 1.3rem;
+  }
+
+  .invite-modal {
+    width: 95%;
+    max-width: none;
+  }
+
+  .modal-header {
+    padding: 16px;
+  }
+
+  .modal-header h3 {
+    font-size: 16px;
+  }
+
+  .modal-body {
+    padding: 16px;
+  }
+}

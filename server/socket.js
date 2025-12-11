@@ -58,10 +58,16 @@ export function setupSocket(io) {
                             'SELECT username, avatar_url FROM users WHERE username = ?',
                             username
                         );
+                        // Check if user is host-assist
+                        const hostAssistInvite = await db.get(
+                            'SELECT * FROM channel_invites WHERE channel_id = ? AND username = ? AND role = ? AND status = ?',
+                            channelId, username, 'host_assist', 'accepted'
+                        );
                         return {
                             username: userDetails?.username || username,
                             avatar: userDetails?.avatar_url || null,
-                            isTyping: false
+                            isTyping: false,
+                            isHostAssist: !!hostAssistInvite
                         };
                     })
                 );
@@ -337,14 +343,26 @@ export function setupSocket(io) {
             console.log(`User ${username} left channel ${channelId}`);
         });
 
-        // Kick user (host only)
+        // Kick user (host or host-assist)
         socket.on('kick_user', async (data) => {
             const { channelId, targetUsername, hostUsername } = data;
             try {
                 const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
-                if (channel && channel.host === hostUsername) {
-                    // Remove invite so they need to be re-invited
-                    await db.run('DELETE FROM channel_invites WHERE channel_id = ? AND username = ?', channelId, targetUsername);
+
+                // Check if user is host or host-assist
+                const isHost = channel && channel.host === hostUsername;
+                const hostAssistInvite = await db.get(
+                    'SELECT * FROM channel_invites WHERE channel_id = ? AND username = ? AND role = ? AND status = ?',
+                    channelId, hostUsername, 'host_assist', 'accepted'
+                );
+                const isHostAssist = !!hostAssistInvite;
+
+                if (isHost || isHostAssist) {
+                    // Ban the user (create or update invite to banned status)
+                    await db.run(
+                        'INSERT OR REPLACE INTO channel_invites (channel_id, username, invited_by, timestamp, status, role) VALUES (?, ?, ?, ?, ?, ?)',
+                        channelId, targetUsername, hostUsername, Date.now(), 'banned', 'member'
+                    );
 
                     // Send system message
                     io.to(channelId).emit('receive_message', {
@@ -357,16 +375,45 @@ export function setupSocket(io) {
                         isSystem: true
                     });
 
-                    // Find target socket and remove from room
+                    // Find target socket and move them to default room
                     const targetSocketEntry = Object.entries(users).find(([, u]) => u.username === targetUsername && u.room === channelId);
                     if (targetSocketEntry) {
                         const [targetSocketId] = targetSocketEntry;
-                        io.sockets.sockets.get(targetSocketId)?.leave(channelId);
-                        io.to(targetSocketId).emit('kicked_from_channel', { channelId, by: hostUsername });
+                        const targetSocket = io.sockets.sockets.get(targetSocketId);
+                        if (targetSocket) {
+                            // Leave current channel
+                            targetSocket.leave(channelId);
+
+                            // Auto-join default channel (c1 - General)
+                            const defaultChannelId = 'c1';
+                            targetSocket.join(defaultChannelId);
+                            users[targetSocketId].room = defaultChannelId;
+
+                            // Notify the kicked user
+                            io.to(targetSocketId).emit('kicked_from_channel', {
+                                channelId,
+                                by: hostUsername,
+                                redirectTo: defaultChannelId
+                            });
+
+                            // Send system message to default channel
+                            io.to(defaultChannelId).emit('receive_message', {
+                                id: Date.now() + 1,
+                                channel_id: defaultChannelId,
+                                sender: 'System',
+                                text: `${targetUsername} joined the channel`,
+                                time: new Date().toLocaleTimeString(),
+                                timestamp: Date.now(),
+                                isSystem: true
+                            });
+
+                            // Broadcast members update for default channel
+                            broadcastChannelMembers(defaultChannelId);
+                        }
                     }
                     io.to(channelId).emit('user_kicked', { username: targetUsername, by: hostUsername });
 
-                    // Update channel members
+                    // Update channel members for the channel user was kicked from
                     broadcastChannelMembers(channelId);
 
                     console.log(`User ${targetUsername} kicked from ${channelId} by ${hostUsername}`);
@@ -406,6 +453,104 @@ export function setupSocket(io) {
                 }
             } catch (e) {
                 console.error("Make host error:", e);
+            }
+        });
+
+        // Invite user to be host-assist (host only)
+        socket.on('invite_host_assist', async (data) => {
+            const { channelId, channelName, targetUsername, fromUsername } = data;
+            try {
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                if (channel && channel.host === fromUsername) {
+                    // Create host-assist invite
+                    await db.run(
+                        'INSERT OR REPLACE INTO channel_invites (channel_id, username, invited_by, timestamp, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+                        channelId, targetUsername, fromUsername, Date.now(), 'host_assist', 'invited'
+                    );
+                    console.log(`Created host-assist invite for ${targetUsername} to ${channelId}`);
+
+                    // Find target user's socket and notify them
+                    const targetSocketEntry = Object.entries(users).find(([, u]) => u.username === targetUsername);
+                    if (targetSocketEntry) {
+                        const [socketId] = targetSocketEntry;
+                        io.to(socketId).emit('host_assist_invitation_received', {
+                            from: fromUsername,
+                            channelName,
+                            channelId
+                        });
+                        console.log(`Sent host-assist invitation to ${targetUsername}`);
+                    }
+                }
+            } catch (e) {
+                console.error("Invite host-assist error:", e);
+            }
+        });
+
+        // Respond to host-assist invitation
+        socket.on('respond_host_assist', async (data) => {
+            const { channelId, username, accepted } = data;
+            try {
+                if (accepted) {
+                    // Update status to accepted
+                    await db.run(
+                        'UPDATE channel_invites SET status = ? WHERE channel_id = ? AND username = ? AND role = ?',
+                        'accepted', channelId, username, 'host_assist'
+                    );
+
+                    // Send system message
+                    io.to(channelId).emit('receive_message', {
+                        id: Date.now(),
+                        channel_id: channelId,
+                        sender: 'System',
+                        text: `${username} is now a host-assist`,
+                        time: new Date().toLocaleTimeString(),
+                        timestamp: Date.now(),
+                        isSystem: true
+                    });
+
+                    // Update channel members
+                    broadcastChannelMembers(channelId);
+
+                    console.log(`${username} accepted host-assist for ${channelId}`);
+                } else {
+                    // Delete the invite if rejected
+                    await db.run(
+                        'DELETE FROM channel_invites WHERE channel_id = ? AND username = ? AND role = ?',
+                        channelId, username, 'host_assist'
+                    );
+                    console.log(`${username} rejected host-assist for ${channelId}`);
+                }
+            } catch (e) {
+                console.error("Respond host-assist error:", e);
+            }
+        });
+
+        // Delete channel (host only)
+        socket.on('delete_channel', async (data) => {
+            const { channelId, username } = data;
+            try {
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                if (channel && channel.host === username) {
+                    // Delete channel and related data
+                    await db.run('DELETE FROM channels WHERE id = ?', channelId);
+                    await db.run('DELETE FROM messages WHERE channel_id = ?', channelId);
+                    await db.run('DELETE FROM channel_invites WHERE channel_id = ?', channelId);
+                    await db.run('DELETE FROM reactions WHERE channel_id = ?', channelId);
+                    await db.run('DELETE FROM message_reads WHERE channel_id = ?', channelId);
+
+                    // Notify all users in the channel
+                    io.to(channelId).emit('channel_deleted', { channelId, deletedBy: username });
+
+                    // Update channel list for all users
+                    broadcastChannelList();
+
+                    console.log(`Channel ${channelId} deleted by ${username}`);
+                } else {
+                    socket.emit('delete_channel_error', 'Only the host can delete this channel');
+                }
+            } catch (e) {
+                console.error("Delete channel error:", e);
+                socket.emit('delete_channel_error', 'Failed to delete channel');
             }
         });
 
@@ -458,10 +603,10 @@ export function setupSocket(io) {
         socket.on('invite_user', async (data) => {
             const { channelId, channelName, targetUsername, fromUsername } = data;
             try {
-                // Store the invite in database
+                // Store/update the invite in database (clear any ban status)
                 await db.run(
-                    'INSERT OR IGNORE INTO channel_invites (channel_id, username, invited_by, timestamp) VALUES (?, ?, ?, ?)',
-                    channelId, targetUsername, fromUsername, Date.now()
+                    'INSERT OR REPLACE INTO channel_invites (channel_id, username, invited_by, timestamp, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+                    channelId, targetUsername, fromUsername, Date.now(), 'member', 'invited'
                 );
                 console.log(`Stored invite for ${targetUsername} to ${channelId}`);
 
@@ -495,18 +640,43 @@ export function setupSocket(io) {
                     return;
                 }
 
-                // Check if invited
+                // Check if banned
+                let isBanned = false;
                 let isInvited = false;
                 try {
                     const invite = await db.get('SELECT * FROM channel_invites WHERE channel_id = ? AND username = ?',
                         channelId, username);
-                    if (invite) isInvited = true;
+                    if (invite) {
+                        if (invite.status === 'banned') {
+                            isBanned = true;
+                        } else if (invite.status === 'invited' || invite.status === 'accepted') {
+                            isInvited = true;
+                        }
+                    }
                 } catch (e) {
                     console.error("Error checking invite:", e);
                 }
 
-                // Grant access if invited OR (passcode matches OR host is user) OR no passcode
-                if (isInvited || !channel.passcode || channel.passcode === passcode || channel.host === username) {
+                // Reject if banned
+                if (isBanned) {
+                    socket.emit("join_channel_error", "You have been banned from this channel");
+                    return;
+                }
+
+                // Grant access if invited OR host OR (no passcode OR passcode matches)
+                if (isInvited || channel.host === username || !channel.passcode || channel.passcode === passcode) {
+                    // Mark invite as accepted if it exists, or create one if user joined with passcode
+                    if (isInvited) {
+                        await db.run('UPDATE channel_invites SET status = ? WHERE channel_id = ? AND username = ?',
+                            'accepted', channelId, username);
+                    } else if (channel.passcode && channel.passcode === passcode) {
+                        // User joined with correct passcode - create accepted invite so they don't need passcode again
+                        await db.run(
+                            'INSERT OR REPLACE INTO channel_invites (channel_id, username, invited_by, timestamp, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+                            channelId, username, channel.host, Date.now(), 'member', 'accepted'
+                        );
+                        console.log(`Created accepted invite for ${username} in ${channelId} (joined with passcode)`);
+                    }
                     socket.emit("join_channel_success", channelId);
                 } else {
                     // Return object with needsPasscode flag if passcode was null

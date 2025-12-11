@@ -72,6 +72,8 @@ export async function initializeDatabase() {
                 username TEXT,
                 invited_by TEXT,
                 timestamp BIGINT,
+                role TEXT DEFAULT 'member',
+                status TEXT DEFAULT 'invited',
                 PRIMARY KEY (channel_id, username)
             );
 
@@ -169,6 +171,8 @@ export async function initializeDatabase() {
                 username TEXT,
                 invited_by TEXT,
                 timestamp INTEGER,
+                role TEXT DEFAULT 'member',
+                status TEXT DEFAULT 'invited',
                 PRIMARY KEY (channel_id, username)
             );
 
@@ -195,6 +199,22 @@ export async function initializeDatabase() {
         try {
             await db.run('ALTER TABLE users ADD COLUMN avatar_url TEXT');
             console.log('Migration: Added avatar_url column to users table');
+        } catch (e) {
+            // Column already exists, ignore error
+        }
+
+        // Migration: Add role column to channel_invites if it doesn't exist
+        try {
+            await db.run('ALTER TABLE channel_invites ADD COLUMN role TEXT DEFAULT \'member\'');
+            console.log('Migration: Added role column to channel_invites table');
+        } catch (e) {
+            // Column already exists, ignore error
+        }
+
+        // Migration: Add status column to channel_invites if it doesn't exist
+        try {
+            await db.run('ALTER TABLE channel_invites ADD COLUMN status TEXT DEFAULT \'invited\'');
+            console.log('Migration: Added status column to channel_invites table');
         } catch (e) {
             // Column already exists, ignore error
         }

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 
 const Sidebar = ({ teams, selectedTeamId, selectedChannelId, onSelectChannel, onCreateChannel, users, selectedUserId, onSelectUser, currentUsername }) => {
+    const { t } = useI18n();
     const selectedTeam = teams.find(t => t.id === selectedTeamId);
 
     // Filter out the current user from DM list
@@ -27,19 +29,19 @@ const Sidebar = ({ teams, selectedTeamId, selectedChannelId, onSelectChannel, on
 
                 <div className="sidebar-section">
                     <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        CHANNELS
+                        {t('sidebar.channels')}
                         <button
                             onClick={() => {
-                                const name = prompt("Enter channel name:");
+                                const name = prompt(t('sidebar.enterChannelName'));
                                 if (name) {
-                                    const passcode = prompt("Enter passcode (optional):");
+                                    const passcode = prompt(t('sidebar.enterPasscode'));
                                     onCreateChannel(selectedTeamId, name, passcode);
                                 }
                             }}
                             style={{
                                 background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1.2rem', padding: '0 5px'
                             }}
-                            title="Create Channel"
+                            title={t('sidebar.createChannel')}
                         >
                             +
                         </button>
@@ -58,7 +60,7 @@ const Sidebar = ({ teams, selectedTeamId, selectedChannelId, onSelectChannel, on
                 </div>
 
                 <div className="sidebar-section">
-                    <div className="section-title">DIRECT MESSAGES</div>
+                    <div className="section-title">{t('sidebar.directMessages')}</div>
                     <ul>
                         {otherUsers.length > 0 ? otherUsers.map(user => (
                             <li
@@ -84,7 +86,7 @@ const Sidebar = ({ teams, selectedTeamId, selectedChannelId, onSelectChannel, on
                                 {user.name}
                             </li>
                         )) : (
-                            <li className="sidebar-item empty-state">No other users</li>
+                            <li className="sidebar-item empty-state">{t('sidebar.noOtherUsers')}</li>
                         )}
                     </ul>
                 </div>

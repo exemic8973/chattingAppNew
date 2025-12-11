@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useImperativeHandle } from 'react';
 import Message from './Message';
+import { useI18n } from '../i18n/I18nContext';
 
 const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], onTyping, onStopTyping, onLoadMore, onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser }, ref) => {
+    const { t } = useI18n();
     const [inputValue, setInputValue] = useState('');
     const messagesEndRef = useRef(null);
     const messagesListRef = useRef(null);
@@ -145,7 +147,7 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
                 ref={messagesListRef}
                 onScroll={handleScroll}
             >
-                {isLoadingMore && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>Loading history...</div>}
+                {isLoadingMore && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>{t('chat.loadingHistory')}</div>}
                 {messages.map(msg => (
                     <Message
                         key={msg.id}
@@ -172,7 +174,7 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
                         padding: '10px 20px',
                         animation: 'fadeIn 0.3s'
                     }}>
-                        {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
+                        {typingUsers.join(', ')} {t('chat.typing')}
                     </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -188,7 +190,7 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
                     className="attach-button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
-                    title="Attach image"
+                    title={t('chat.attachImage')}
                     style={{
                         background: 'transparent',
                         border: 'none',
@@ -202,12 +204,12 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
                 </button>
                 <input
                     type="text"
-                    placeholder="Type a message (Markdown supported)"
+                    placeholder={t('chat.typeMessage')}
                     value={inputValue}
                     onChange={handleChange}
                     onKeyDown={handleKeyDown}
                 />
-                <button onClick={handleSend}>Send</button>
+                <button onClick={handleSend}>{t('chat.send')}</button>
             </div>
         </div>
     );

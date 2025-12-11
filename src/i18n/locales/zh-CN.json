@@ -1,0 +1,83 @@
+{
+  "app": {
+    "name": "聊天应用"
+  },
+  "auth": {
+    "login": "登录",
+    "signup": "注册",
+    "username": "用户名",
+    "password": "密码",
+    "logout": "登出",
+    "loginButton": "登录",
+    "signupButton": "创建账户",
+    "alreadyHaveAccount": "已有账户？",
+    "needAccount": "需要账户？"
+  },
+  "header": {
+    "search": "搜索消息",
+    "themeToggle": "切换主题",
+    "voiceCall": "语音通话",
+    "videoCall": "视频通话",
+    "inviteUser": "邀请用户",
+    "kickUser": "踢出用户",
+    "leaveChannel": "离开频道",
+    "profileSettings": "个人设置"
+  },
+  "sidebar": {
+    "channels": "频道",
+    "directMessages": "私信",
+    "createChannel": "创建频道"
+  },
+  "chat": {
+    "typeMessage": "输入消息...",
+    "send": "发送",
+    "typing": "{user} 正在输入...",
+    "multipleTyping": "{users} 正在输入...",
+    "loadMore": "加载更多消息",
+    "noMessages": "暂无消息"
+  },
+  "members": {
+    "title": "成员",
+    "online": "在线",
+    "typing": "正在输入...",
+    "hostBadge": "主持人",
+    "youBadge": "（你）",
+    "manageUser": "管理 {user}",
+    "kickUser": "踢出用户",
+    "makeHost": "设为主持人",
+    "cancel": "取消"
+  },
+  "system": {
+    "joined": "{user} 加入了频道",
+    "left": "{user} 离开了频道",
+    "disconnected": "{user} 已断开连接",
+    "kicked": "{user} 被 {by} 踢出",
+    "newHost": "{user} 现在是主持人"
+  },
+  "dialogs": {
+    "confirmKick": "确定要踢出 {user} 吗？",
+    "confirmMakeHost": "将 {user} 设为频道主持人？",
+    "confirmLeave": "确定要离开此频道吗？",
+    "enterChannelName": "输入频道名称：",
+    "enterPasscode": "输入密码（可选）：",
+    "enterUsername": "输入要踢出的用户名：",
+    "enterInviteUsername": "输入要邀请的用户名：",
+    "enterChannelPasscode": "输入频道密码："
+  },
+  "profile": {
+    "title": "个人设置",
+    "changeAvatar": "更改头像",
+    "uploadImage": "上传图片",
+    "close": "关闭"
+  },
+  "search": {
+    "title": "搜索消息",
+    "placeholder": "搜索...",
+    "noResults": "未找到结果"
+  },
+  "language": {
+    "title": "语言",
+    "english": "English",
+    "chinese": "简体中文"
+  }
+}
