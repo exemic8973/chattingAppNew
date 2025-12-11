@@ -134,7 +134,27 @@ export async function initializeDatabase() {
         db = {
             run: async (sql, ...params) => {
                 let paramIndex = 1;
-                const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+                let pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+
+                // Convert SQLite's "INSERT OR REPLACE" to PostgreSQL's "INSERT ... ON CONFLICT ... DO UPDATE"
+                if (pgSql.match(/INSERT OR REPLACE INTO channel_invites/i)) {
+                    // Extract table name, columns, and values
+                    const match = pgSql.match(/INSERT OR REPLACE INTO (\w+)\s*\((.*?)\)\s*VALUES\s*\((.*?)\)/i);
+                    if (match) {
+                        const table = match[1];
+                        const columns = match[2].split(',').map(c => c.trim());
+                        const placeholders = match[3];
+
+                        // For channel_invites, primary key is (channel_id, username)
+                        const updateSet = columns
+                            .filter(col => col !== 'channel_id' && col !== 'username')
+                            .map(col => `${col} = EXCLUDED.${col}`)
+                            .join(', ');
+
+                        pgSql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT (channel_id, username) DO UPDATE SET ${updateSet}`;
+                    }
+                }
+
                 await pgPool.query(pgSql, params);
             },
             get: async (sql, ...params) => {
