@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTheme } from '../context/ThemeContext';
 
-const Header = ({ channelName, onVideoCall, onVoiceCall, onInviteUser, onLeaveChannel, onKickUser, onSearch, onProfile, userAvatar, username, isChannel, isHost }) => {
+const Header = ({ channelName, onVideoCall, onVoiceCall, onInviteUser, onLeaveChannel, onKickUser, onSearch, onProfile, onLogout, userAvatar, username, isChannel, isHost }) => {
     const { isDarkMode, toggleTheme } = useTheme();
 
     return (
@@ -70,6 +70,14 @@ const Header = ({ channelName, onVideoCall, onVoiceCall, onInviteUser, onLeaveCh
                 >
                     {!userAvatar && username?.[0]?.toUpperCase()}
                 </div>
+                <button
+                    className="action-btn"
+                    onClick={onLogout}
+                    title="Logout"
+                    style={{ color: '#ff6b6b' }}
+                >
+                    🚪
+                </button>
             </div>
         </div>
     );
