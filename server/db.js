@@ -112,6 +112,21 @@ export async function initializeDatabase() {
             }
         }
 
+        // PostgreSQL-specific migrations (for existing databases)
+        try {
+            await pgPool.query(`ALTER TABLE channel_invites ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'member'`);
+            console.log('PostgreSQL Migration: Added role column to channel_invites table');
+        } catch (e) {
+            console.log('PostgreSQL Migration: role column already exists or error:', e.message);
+        }
+
+        try {
+            await pgPool.query(`ALTER TABLE channel_invites ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'invited'`);
+            console.log('PostgreSQL Migration: Added status column to channel_invites table');
+        } catch (e) {
+            console.log('PostgreSQL Migration: status column already exists or error:', e.message);
+        }
+
         console.log("PostgreSQL Database initialized");
 
         // Create a wrapper to match SQLite API
