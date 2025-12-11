@@ -647,14 +647,21 @@ export function setupSocket(io) {
                     const invite = await db.get('SELECT * FROM channel_invites WHERE channel_id = ? AND username = ?',
                         channelId, username);
                     if (invite) {
+                        console.log(`Invite found for ${username} in ${channelId}:`, invite);
                         if (invite.status === 'banned') {
                             isBanned = true;
                         } else if (invite.status === 'invited' || invite.status === 'accepted') {
                             isInvited = true;
                         }
+                    } else {
+                        console.log(`No invite found for ${username} in ${channelId}`);
                     }
                 } catch (e) {
-                    console.error("Error checking invite:", e);
+                    console.error("ERROR checking invite - This likely means the database schema is missing columns:", e);
+                    console.error("Stack trace:", e.stack);
+                    // If there's a database error, emit it to the client
+                    socket.emit("join_channel_error", `Database error: ${e.message}. Please contact administrator.`);
+                    return;
                 }
 
                 // Reject if banned
