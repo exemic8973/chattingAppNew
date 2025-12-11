@@ -44,6 +44,48 @@ export function setupSocket(io) {
             }
         };
 
+        const broadcastChannelMembers = async (channelId) => {
+            try {
+                // Get all users currently in this channel
+                const channelMembers = Object.values(users)
+                    .filter(user => user.room === channelId)
+                    .map(user => user.username);
+
+                // Get user details from database
+                const membersWithDetails = await Promise.all(
+                    channelMembers.map(async (username) => {
+                        const userDetails = await db.get(
+                            'SELECT username, avatar_url FROM users WHERE username = ?',
+                            username
+                        );
+                        return {
+                            username: userDetails?.username || username,
+                            avatar: userDetails?.avatar_url || null,
+                            isTyping: false
+                        };
+                    })
+                );
+
+                // Get channel host
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                const host = channel?.host;
+
+                // Mark who is the host
+                const membersWithHost = membersWithDetails.map(member => ({
+                    ...member,
+                    isHost: member.username === host
+                }));
+
+                // Emit to all users in the channel
+                io.to(channelId).emit('channel_members_update', {
+                    channelId,
+                    members: membersWithHost
+                });
+            } catch (e) {
+                console.error("Error broadcasting channel members:", e);
+            }
+        };
+
         // Auth Events
         socket.on('signup', async (data) => {
             const { username, password } = data;
@@ -100,13 +142,27 @@ export function setupSocket(io) {
             // Broadcast updated user list
             broadcastUserList();
 
+            // Broadcast channel members to all in the channel
+            broadcastChannelMembers(channelId);
+
+            // Send system message to channel that user joined
+            io.to(channelId).emit('receive_message', {
+                id: Date.now(),
+                channel_id: channelId,
+                sender: 'System',
+                text: `${username} joined the channel`,
+                time: new Date().toLocaleTimeString(),
+                timestamp: Date.now(),
+                isSystem: true
+            });
+
             // Fetch history from DB (Limit 50)
             try {
                 const history = await db.all(`
                     SELECT * FROM (
-                        SELECT * FROM messages 
-                        WHERE channel_id = ? 
-                        ORDER BY timestamp DESC 
+                        SELECT * FROM messages
+                        WHERE channel_id = ?
+                        ORDER BY timestamp DESC
                         LIMIT 50
                     ) ORDER BY timestamp ASC
                 `, channelId);
@@ -255,12 +311,29 @@ export function setupSocket(io) {
         // Leave channel
         socket.on('leave_channel', (data) => {
             const { channelId, username } = data;
+
+            // Send system message before leaving
+            io.to(channelId).emit('receive_message', {
+                id: Date.now(),
+                channel_id: channelId,
+                sender: 'System',
+                text: `${username} left the channel`,
+                time: new Date().toLocaleTimeString(),
+                timestamp: Date.now(),
+                isSystem: true
+            });
+
             socket.leave(channelId);
             if (users[socket.id]) {
                 users[socket.id].room = null;
             }
+
             // Notify channel
             io.to(channelId).emit('user_left_channel', { username, channelId });
+
+            // Update channel members list
+            broadcastChannelMembers(channelId);
+
             console.log(`User ${username} left channel ${channelId}`);
         });
 
@@ -273,6 +346,17 @@ export function setupSocket(io) {
                     // Remove invite so they need to be re-invited
                     await db.run('DELETE FROM channel_invites WHERE channel_id = ? AND username = ?', channelId, targetUsername);
 
+                    // Send system message
+                    io.to(channelId).emit('receive_message', {
+                        id: Date.now(),
+                        channel_id: channelId,
+                        sender: 'System',
+                        text: `${targetUsername} was kicked by ${hostUsername}`,
+                        time: new Date().toLocaleTimeString(),
+                        timestamp: Date.now(),
+                        isSystem: true
+                    });
+
                     // Find target socket and remove from room
                     const targetSocketEntry = Object.entries(users).find(([, u]) => u.username === targetUsername && u.room === channelId);
                     if (targetSocketEntry) {
@@ -281,10 +365,47 @@ export function setupSocket(io) {
                         io.to(targetSocketId).emit('kicked_from_channel', { channelId, by: hostUsername });
                     }
                     io.to(channelId).emit('user_kicked', { username: targetUsername, by: hostUsername });
+
+                    // Update channel members
+                    broadcastChannelMembers(channelId);
+
                     console.log(`User ${targetUsername} kicked from ${channelId} by ${hostUsername}`);
                 }
             } catch (e) {
                 console.error("Kick user error:", e);
+            }
+        });
+
+        // Make host (host only)
+        socket.on('make_host', async (data) => {
+            const { channelId, targetUsername, currentHost} = data;
+            try {
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                if (channel && channel.host === currentHost) {
+                    // Update channel host in database
+                    await db.run('UPDATE channels SET host = ? WHERE id = ?', targetUsername, channelId);
+
+                    // Send system message
+                    io.to(channelId).emit('receive_message', {
+                        id: Date.now(),
+                        channel_id: channelId,
+                        sender: 'System',
+                        text: `${targetUsername} is now the host`,
+                        time: new Date().toLocaleTimeString(),
+                        timestamp: Date.now(),
+                        isSystem: true
+                    });
+
+                    // Notify everyone about host change
+                    io.to(channelId).emit('host_changed', { channelId, newHost: targetUsername });
+
+                    // Update channel members to reflect new host
+                    broadcastChannelMembers(channelId);
+
+                    console.log(`${targetUsername} is now host of ${channelId}`);
+                }
+            } catch (e) {
+                console.error("Make host error:", e);
             }
         });
 
@@ -467,6 +588,25 @@ export function setupSocket(io) {
 
         socket.on('disconnect', () => {
             console.log('User Disconnected', socket.id);
+
+            // Get user info before deleting
+            const user = users[socket.id];
+            if (user && user.room) {
+                // Send system message to channel
+                io.to(user.room).emit('receive_message', {
+                    id: Date.now(),
+                    channel_id: user.room,
+                    sender: 'System',
+                    text: `${user.username} disconnected`,
+                    time: new Date().toLocaleTimeString(),
+                    timestamp: Date.now(),
+                    isSystem: true
+                });
+
+                // Update channel members
+                broadcastChannelMembers(user.room);
+            }
+
             delete users[socket.id];
             broadcastUserList();
         });
