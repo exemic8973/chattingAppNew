@@ -7,6 +7,7 @@ import Login from './components/Login';
 import VideoCall from './components/VideoCall';
 import ProfileModal from './components/ProfileModal';
 import SearchModal from './components/SearchModal';
+import ChannelMembers from './components/ChannelMembers';
 import { initialData, initialUsers } from './data';
 
 // Connect to backend
@@ -53,6 +54,7 @@ function App() {
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
   const [isVoiceCall, setIsVoiceCall] = useState(false);
   const [typingUsers, setTypingUsers] = useState(new Set());
+  const [channelMembers, setChannelMembers] = useState([]);
   const chatAreaRef = useRef(null);
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
@@ -66,8 +68,19 @@ function App() {
       socket.emit("join_channel", { username, channelId: selectedChannelId });
       setCurrentMessages([]);
       setTypingUsers(new Set()); // Reset typing users when changing channel
+      setChannelMembers([]); // Reset channel members when changing channel
     }
   }, [selectedChannelId, isLoggedIn, username]);
+
+  // Update typing status in channel members when typingUsers changes
+  useEffect(() => {
+    setChannelMembers(prev =>
+      prev.map(member => ({
+        ...member,
+        isTyping: typingUsers.has(member.username)
+      }))
+    );
+  }, [typingUsers]);
 
   useEffect(() => {
     socket.on("receive_message", (data) => {
@@ -96,6 +109,18 @@ function App() {
         newSet.delete(typer);
         return newSet;
       });
+    });
+
+    socket.on("channel_members_update", ({ channelId, members }) => {
+      // Only update if this is for the current channel
+      if (channelId === selectedChannelId) {
+        // Merge typing status from typingUsers into members
+        const membersWithTyping = members.map(member => ({
+          ...member,
+          isTyping: typingUsers.has(member.username)
+        }));
+        setChannelMembers(membersWithTyping);
+      }
     });
 
     socket.on("update_channel_list", (serverChannels) => {
@@ -299,6 +324,28 @@ function App() {
     }
   };
 
+  const handleKickUserFromMembers = (targetUsername) => {
+    if (!selectedChannelId) return;
+    if (confirm(`Are you sure you want to kick ${targetUsername}?`)) {
+      socket.emit("kick_user", {
+        channelId: selectedChannelId,
+        targetUsername: targetUsername,
+        hostUsername: username
+      });
+    }
+  };
+
+  const handleMakeHost = (targetUsername) => {
+    if (!selectedChannelId) return;
+    if (confirm(`Make ${targetUsername} the host of this channel?`)) {
+      socket.emit("make_host", {
+        channelId: selectedChannelId,
+        targetUsername: targetUsername,
+        currentHost: username
+      });
+    }
+  };
+
   const handleUserSelect = (userId) => {
     setSelectedUserId(userId);
     setSelectedChannelId(null); // Deselect channel
@@ -436,6 +483,16 @@ function App() {
           />
         )}
       </div>
+
+      {!selectedUserId && selectedChannelId && (
+        <ChannelMembers
+          members={channelMembers}
+          currentUser={username}
+          isHost={selectedChannel?.host === username}
+          onKickUser={handleKickUserFromMembers}
+          onMakeHost={handleMakeHost}
+        />
+      )}
 
       {showProfileModal && (
         <ProfileModal
