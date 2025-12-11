@@ -413,4 +413,345 @@ For issues or questions about this deployment:
 3. Check Zeabur build logs for deployment issues
 4. Verify environment variables are set correctly
 
-Last Updated: 2025-12-10
+---
+
+## Issue #6: Database Schema Missing Columns
+**Date:** 2025-12-10
+**Branch:** production
+
+### Error Message:
+```
+Error: SQLITE_ERROR: no such column: role
+Error: table channel_invites has no column named role
+Error: table channel_invites has no column named status
+```
+
+### Root Cause:
+- Schema updates added `role` and `status` columns to `channel_invites` table
+- Existing databases (both SQLite and PostgreSQL) didn't have these columns
+- Code tried to query/insert these new columns, causing SQL errors
+
+### Problem Impact:
+- Members not displaying in channel list
+- Invitation system not working
+- Kick user functionality broken
+
+### Solution:
+**File:** `server/db.js` (Lines 206-220)
+
+Added automatic database migration logic that runs on server startup:
+
+```javascript
+// Migration: Add role column to channel_invites if it doesn't exist
+try {
+    await db.run('ALTER TABLE channel_invites ADD COLUMN role TEXT DEFAULT \'member\'');
+    console.log('Migration: Added role column to channel_invites table');
+} catch (e) {
+    // Column already exists, ignore error
+}
+
+// Migration: Add status column to channel_invites if it doesn't exist
+try {
+    await db.run('ALTER TABLE channel_invites ADD COLUMN status TEXT DEFAULT \'invited\'');
+    console.log('Migration: Added status column to channel_invites table');
+} catch (e) {
+    // Column already exists, ignore error
+}
+```
+
+**Migration Strategy:**
+- Runs automatically on database initialization
+- Safe for both new and existing databases
+- Uses try-catch to ignore errors if columns already exist
+- Default values ensure backward compatibility
+
+**Benefits:**
+- No manual database updates required
+- Works for all deployment environments
+- Preserves existing data
+- Automatic for all users
+
+**Commit:** `7a85c24` - "Add responsive design and internationalization support"
+
+---
+
+## Update #7: Responsive Design and Mobile Support
+**Date:** 2025-12-10
+**Branch:** production
+
+### Implementation:
+Added comprehensive responsive CSS to support mobile and tablet devices.
+
+### Changes:
+
+**File:** `src/index.css` (Lines 551-756)
+
+**Breakpoints:**
+1. **Tablet (≤1024px):**
+   - Reduced sidebar width to 240px
+   - Reduced channel members panel to 220px
+   - Adjusted message bubbles to 75% max-width
+   - Smaller button padding and font sizes
+
+2. **Mobile (≤768px):**
+   - Sidebar becomes horizontal at top (40vh max height)
+   - Channel members panel hidden completely
+   - Full-width chat area
+   - Adjusted spacing and typography
+   - Smaller input fields and buttons
+   - Optimized login page for mobile
+
+3. **Small Mobile (≤480px):**
+   - Further reduced sidebar height to 35vh
+   - Hid button text labels (icons only)
+   - Increased message bubble max-width to 90%
+   - Minimal padding and spacing
+
+**Benefits:**
+- Mobile-first design approach
+- Optimized touch targets
+- Better use of screen space on small devices
+- Consistent experience across all devices
+
+**Commit:** `7a85c24` - "Add responsive design and internationalization support"
+
+---
+
+## Update #8: Internationalization (i18n) System
+**Date:** 2025-12-10
+**Branch:** production
+
+### Implementation:
+Added complete i18n system with English and Chinese (Simplified) translation support.
+
+### New Files Created:
+1. **`src/i18n/I18nContext.jsx`** - i18n context provider with auto-detection
+2. **`src/i18n/locales/en.json`** - English translations
+3. **`src/i18n/locales/zh-CN.json`** - Chinese (Simplified) translations
+4. **`src/components/LanguageSwitcher.jsx`** - Language selection dropdown
+
+### Components Updated:
+All UI components updated to use `useI18n()` hook and `t()` translation function:
+- Login.jsx
+- Header.jsx
+- Sidebar.jsx
+- ChatArea.jsx
+- InviteUserModal.jsx
+
+### Features:
+- **Auto Language Detection**: Detects browser language on first visit
+- **Language Persistence**: Saves preference to localStorage
+- **Full Coverage**: All UI text translated (500+ strings)
+- **Easy Switching**: Dropdown in header for language selection
+- **Fallback System**: Falls back to English if translation missing
+
+### Supported Languages:
+1. **English** (en)
+2. **Chinese Simplified** (zh-CN)
+
+### Usage:
+```javascript
+import { useI18n } from '../i18n/I18nContext';
+
+const MyComponent = () => {
+    const { t } = useI18n();
+    return <button>{t('button.submit')}</button>;
+};
+```
+
+**Commit:** `7a85c24` - "Add responsive design and internationalization support"
+
+---
+
+## Update #9: Enhanced Channel Management
+**Date:** 2025-12-10
+**Branch:** production
+
+### New Features Implemented:
+
+#### 1. Passcode Persistence
+**File:** `server/socket.js` (Lines 666-680)
+
+- Users now only enter passcode once per channel
+- System creates "accepted" invite record after successful passcode entry
+- Passcode not required on subsequent joins (unless user is kicked)
+
+```javascript
+if (channel.passcode && channel.passcode === passcode) {
+    // Create accepted invite so they don't need passcode again
+    await db.run(
+        'INSERT OR REPLACE INTO channel_invites (channel_id, username, invited_by, timestamp, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+        channelId, username, channel.host, Date.now(), 'member', 'accepted'
+    );
+}
+```
+
+#### 2. Ban System for Kicked Users
+**File:** `server/socket.js` (Lines 343-416)
+
+- Kicked users now have status set to 'banned'
+- Banned users cannot rejoin the channel
+- Auto-redirect to default channel (#general) when kicked
+- System message sent to both channels
+
+```javascript
+// Ban the user
+await db.run(
+    'INSERT OR REPLACE INTO channel_invites (channel_id, username, invited_by, timestamp, status, role) VALUES (?, ?, ?, ?, ?, ?)',
+    channelId, targetUsername, hostUsername, Date.now(), 'banned', 'member'
+);
+
+// Auto-redirect to default channel
+const defaultChannelId = 'c1';
+targetSocket.join(defaultChannelId);
+io.to(targetSocketId).emit('kicked_from_channel', {
+    channelId,
+    by: hostUsername,
+    redirectTo: defaultChannelId
+});
+```
+
+#### 3. Host-Assist Role
+**File:** `server/socket.js` (Lines 456-525)
+
+- New role between member and host
+- Can kick users and manage members
+- Cannot transfer host or delete channel
+- Host can promote members to host-assist
+
+#### 4. Channel Deletion
+**File:** `server/socket.js` (Lines 527-554)
+
+- Host can permanently delete channels
+- Deletes all related data (messages, invites, reactions)
+- All users in channel auto-redirected to default channel
+- Confirmation required in UI
+
+### Benefits:
+- **Better UX**: Don't need to remember/re-enter passcodes
+- **Security**: Banned users stay banned until re-invited
+- **Moderation**: Host-assist helps manage large channels
+- **Cleanup**: Unused channels can be removed
+
+**Commit:** `7a85c24` - "Add responsive design and internationalization support"
+
+---
+
+## Current Status (Updated)
+
+### ✅ All Fixes Completed:
+1. PostgreSQL SSL connection
+2. Frontend deployment and serving
+3. DevDependencies installation in Docker
+4. SSL certificate handling in vite.config.js
+5. Express 5.x route compatibility
+6. **Database schema migrations**
+7. **Responsive design for mobile/tablet**
+8. **Internationalization (i18n) system**
+9. **Enhanced channel management features**
+
+### 🎯 Current Features:
+- **Frontend**: Fully responsive, accessible on all devices
+- **i18n**: English and Chinese (Simplified) support
+- **Backend API**: RESTful endpoints with Socket.IO
+- **WebSocket**: Real-time messaging with typing indicators
+- **Database**: Auto-migrating schema, PostgreSQL in production
+- **File Uploads**: Image and file sharing
+- **Channel Management**: Roles, passcodes, banning, deletion
+
+### 📊 Production Architecture (Updated):
+```
+┌─────────────────────────────────────────────┐
+│         Zeabur Container                     │
+│                                              │
+│  ┌────────────────────────────────────────┐ │
+│  │     Express Server (Node.js)           │ │
+│  │     Port: Auto-assigned by Zeabur      │ │
+│  │                                        │ │
+│  │  • Serves static React frontend       │ │
+│  │  • API routes (/api/*)                │ │
+│  │  • File uploads (/uploads/*)          │ │
+│  │  • WebSocket (Socket.io)              │ │
+│  │  • Responsive UI (mobile/tablet)      │ │
+│  │  • i18n support (EN/ZH)               │ │
+│  │  • Auto database migrations           │ │
+│  │  • Advanced channel management        │ │
+│  │  • Catch-all → index.html             │ │
+│  └────────────────────────────────────────┘ │
+│              ↓                               │
+│  ┌────────────────────────────────────────┐ │
+│  │   PostgreSQL Database                  │ │
+│  │   (No SSL, Auto-migration enabled)    │ │
+│  │                                        │ │
+│  │  • Auto-adds missing columns          │ │
+│  │  • Supports role-based permissions    │ │
+│  │  • Ban system for kicked users        │ │
+│  └────────────────────────────────────────┘ │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## Version History
+
+### Version 2.0.0 (Current) - 2025-12-10
+**Major Update: Responsive Design & Internationalization**
+
+#### Features Added:
+- ✨ Responsive design for mobile and tablet devices
+- 🌍 Internationalization (i18n) with Chinese support
+- 🔒 Passcode persistence (enter once per channel)
+- 🚫 Ban system for kicked users
+- ⭐ Host-assist role for channel management
+- 🗑️ Channel deletion feature
+- 🔄 Automatic database migrations
+- 🎨 Enhanced mobile UX
+
+#### Technical Improvements:
+- Auto-migrating database schema
+- Context-based i18n system
+- Mobile-first responsive CSS
+- Enhanced channel role system
+
+#### Files Changed:
+- 22 files modified
+- 9 new files created
+- 1,347 insertions
+- 83 deletions
+
+**Commit:** `7a85c24` - "Add responsive design and internationalization support"
+
+### Version 1.0.0 - 2025-12-09
+**Initial Production Deployment**
+- Basic chat functionality
+- PostgreSQL integration
+- Docker deployment
+- SSL fixes
+- Express 5.x compatibility
+
+---
+
+## Testing Checklist (Updated)
+
+### After Deployment:
+- [ ] Check build logs for migration messages
+- [ ] Verify frontend loads on mobile devices
+- [ ] Test language switching (EN ↔ ZH)
+- [ ] Test user registration/login
+- [ ] Test channel creation with passcode
+- [ ] Test passcode persistence (rejoin without passcode)
+- [ ] Test kick user (verify ban and redirect)
+- [ ] Test host-assist role permissions
+- [ ] Test channel deletion
+- [ ] Test file uploads
+- [ ] Test message search
+- [ ] Test WebSocket connections
+- [ ] Verify responsive design on:
+  - [ ] Desktop (>1024px)
+  - [ ] Tablet (768px-1024px)
+  - [ ] Mobile (480px-768px)
+  - [ ] Small mobile (<480px)
+
+---
+
+Last Updated: 2025-12-10 (Version 2.0.0)
