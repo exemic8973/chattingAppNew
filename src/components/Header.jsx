@@ -3,7 +3,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useI18n } from '../i18n/I18nContext';
 import LanguageSwitcher from './LanguageSwitcher';
 
-const Header = ({ channelName, onVideoCall, onVoiceCall, onInviteUser, onLeaveChannel, onKickUser, onDeleteChannel, onSearch, onProfile, onLogout, userAvatar, username, isChannel, isHost }) => {
+const Header = ({ channelName, onVideoCall, onVoiceCall, onJoinVoice, showVoiceChannel, onInviteUser, onLeaveChannel, onKickUser, onDeleteChannel, onSearch, onProfile, onLogout, userAvatar, username, isChannel, isHost }) => {
     const { isDarkMode, toggleTheme } = useTheme();
     const { t } = useI18n();
 
@@ -29,12 +29,28 @@ const Header = ({ channelName, onVideoCall, onVoiceCall, onInviteUser, onLeaveCh
                 >
                     {isDarkMode ? '☀️' : '🌙'}
                 </button>
-                <button className="action-btn" onClick={onVoiceCall} title={t('header.voiceCall')}>
-                    🎤
-                </button>
-                <button className="action-btn" onClick={onVideoCall} title={t('header.videoCall')}>
-                    📹
-                </button>
+                {isChannel ? (
+                    <button
+                        className="action-btn"
+                        onClick={onJoinVoice}
+                        title={showVoiceChannel ? t('header.leaveVoice') : t('header.joinVoice')}
+                        style={{
+                            background: showVoiceChannel ? 'var(--accent-color)' : 'transparent',
+                            color: showVoiceChannel ? 'white' : 'inherit'
+                        }}
+                    >
+                        {showVoiceChannel ? '🎤✓' : '🎤'}
+                    </button>
+                ) : (
+                    <>
+                        <button className="action-btn" onClick={onVoiceCall} title={t('header.voiceCall')}>
+                            🎤
+                        </button>
+                        <button className="action-btn" onClick={onVideoCall} title={t('header.videoCall')}>
+                            📹
+                        </button>
+                    </>
+                )}
                 {isChannel && (
                     <button className="action-btn" onClick={onInviteUser} title={t('header.inviteUser')}>
                         ➕👤

@@ -10,6 +10,7 @@ import SearchModal from './components/SearchModal';
 import ChannelMembers from './components/ChannelMembers';
 import InviteUserModal from './components/InviteUserModal';
 import IncomingCallModal from './components/IncomingCallModal';
+import VoiceChannel from './components/VoiceChannel';
 import { initialData, initialUsers } from './data';
 
 // Connect to backend
@@ -57,6 +58,7 @@ function App() {
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
   const [isVoiceCall, setIsVoiceCall] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null); // { from, isVideo, channelId }
+  const [showVoiceChannel, setShowVoiceChannel] = useState(false); // Toggle voice UI
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [channelMembers, setChannelMembers] = useState([]);
   const chatAreaRef = useRef(null);
@@ -516,6 +518,8 @@ function App() {
           channelName={selectedUserId ? selectedUser?.name : selectedChannel?.name}
           onVideoCall={startVideoCall}
           onVoiceCall={startVoiceCall}
+          onJoinVoice={() => setShowVoiceChannel(!showVoiceChannel)}
+          showVoiceChannel={showVoiceChannel}
           onInviteUser={handleInviteUser}
           onLeaveChannel={() => {
             if (selectedChannelId && confirm('Are you sure you want to leave this channel?')) {
@@ -587,6 +591,17 @@ function App() {
             isVideoCall={incomingCall.isVideo}
             onAccept={handleAcceptCall}
             onDecline={handleDeclineCall}
+          />
+        )}
+
+        {showVoiceChannel && !selectedUserId && selectedChannelId && (
+          <VoiceChannel
+            socket={socket}
+            channelId={selectedChannelId}
+            username={username}
+            isHost={selectedChannel?.host === username}
+            isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
+            onClose={() => setShowVoiceChannel(false)}
           />
         )}
       </div>
