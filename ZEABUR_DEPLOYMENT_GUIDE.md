@@ -91,6 +91,42 @@ This guide will walk you through deploying your chat application to Zeabur with 
 3. Try creating an account and logging in
 4. Test sending messages
 
+## Voice/Video Call Features
+
+Your application includes comprehensive voice and video calling capabilities:
+
+### 1-on-1 Calls (Direct Messages)
+- **Voice Calls**: Audio-only calls between two users
+- **Video Calls**: Audio + video calls between two users
+- **Call Notification**: Incoming call modal with Accept/Decline buttons
+- **Ringing Sound**: Audio notification for incoming calls
+
+### Group Voice Channels
+- **Discord-Style Voice Panel**: Persistent bottom panel that doesn't block chat
+- **Permission System**:
+  - Host/host-assist can unmute immediately
+  - Regular users must request permission to speak
+  - Force mute capability for moderators
+- **Speaking Indicators**: Green glow animation shows who's talking
+- **Collapse/Expand**: Minimize panel while staying in voice
+- **Mobile Optimized**: Responsive design for all screen sizes
+
+### WebRTC Configuration
+- Uses peer-to-peer connections (RTCPeerConnection)
+- STUN server: `stun:stun.l.google.com:19302`
+- No additional configuration needed for Zeabur deployment
+- Automatic ICE candidate exchange via Socket.IO
+
+### Testing Voice/Video Features
+After deployment, test these features:
+1. Try a 1-on-1 voice call between two browsers
+2. Join a group channel and click the 🎤 button
+3. Test permission requests and grants
+4. Verify audio works on both sides
+5. Check mobile responsiveness
+
+**Note:** Voice/video requires HTTPS, which Zeabur provides automatically.
+
 ## Troubleshooting
 
 ### If deployment fails:
@@ -208,6 +244,9 @@ To use your own domain:
 - [ ] Verified `DATABASE_URL` is linked
 - [ ] Got public URL
 - [ ] Tested application
+- [ ] **Tested 1-on-1 voice/video calls**
+- [ ] **Tested group voice channels**
+- [ ] **Verified WebRTC connections work**
 - [ ] Application is live!
 
 ---

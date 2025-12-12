@@ -754,4 +754,698 @@ io.to(targetSocketId).emit('kicked_from_channel', {
 
 ---
 
-Last Updated: 2025-12-10 (Version 2.0.0)
+## Issue #10: Voice/Video Call System Bugs
+**Date:** 2025-12-12
+**Branch:** production
+
+### Problems Identified:
+1. **No Audio in Voice Calls**: After WebRTC connection established, no audio could be heard
+2. **Voice Stays Active After Call**: Microphone stayed active after leaving call, required page refresh
+3. **Second Call Doesn't Notify**: Second call attempt didn't notify the recipient
+4. **No Call Accept/Decline Flow**: Missing incoming call notification UI
+
+### Root Causes:
+
+#### Bug 1: No Audio in Calls
+**File:** `src/components/VideoCall.jsx` (Lines 223-260)
+- Video component tried to attach streams to refs after track events already fired
+- No separate audio element for voice-only mode
+- Audio tracks were being added but not properly rendered
+
+#### Bug 2: Voice Stays Active After Call
+**File:** `src/components/VideoCall.jsx` (Lines 10, 20, 80-87)
+- useEffect cleanup function captured stale `stream` state variable
+- Cleanup couldn't access current stream to stop tracks
+- Resulted in microphone staying active even after component unmount
+
+#### Bug 3: Second Call Doesn't Notify
+**File:** `src/App.jsx` (Lines 192-195)
+- Socket listeners in App.jsx never cleaned up, accumulated on each render
+- Multiple listeners prevented proper event handling
+- Second call events were blocked by stale listeners
+
+#### Bug 4: No Call Accept/Decline Flow
+**Files:** Missing `IncomingCallModal.jsx`, incomplete socket events
+- No UI to notify users of incoming calls
+- No way to accept or decline calls
+- Calls auto-started without user consent
+
+### Solutions Implemented:
+
+#### Fix 1: Separate Audio/Video Elements
+**File:** `src/components/VideoCall.jsx` (Lines 223-260)
+
+```javascript
+const Video = ({ peer, isVoiceOnly }) => {
+    const videoRef = useRef();
+    const audioRef = useRef();
+
+    useEffect(() => {
+        if (peer.stream) {
+            if (isVoiceOnly) {
+                // Voice only: use audio element
+                if (audioRef.current) {
+                    audioRef.current.srcObject = peer.stream;
+                }
+            } else {
+                // Video call: use video element
+                if (videoRef.current) {
+                    videoRef.current.srcObject = peer.stream;
+                }
+            }
+        }
+    }, [peer.stream, isVoiceOnly]);
+
+    return (
+        <>
+            {isVoiceOnly ? (
+                <>
+                    <div>👤</div>
+                    <audio ref={audioRef} autoPlay playsInline style={{ display: 'none' }} />
+                </>
+            ) : (
+                <video playsInline ref={videoRef} autoPlay />
+            )}
+        </>
+    );
+};
+```
+
+#### Fix 2: Stream Ref for Cleanup
+**File:** `src/components/VideoCall.jsx` (Lines 10, 20, 80-87)
+
+```javascript
+const streamRef = useRef(null); // Store stream in ref for cleanup
+
+navigator.mediaDevices.getUserMedia({ video: !isVoiceOnly, audio: true })
+    .then((currentStream) => {
+        streamRef.current = currentStream; // Store in ref for reliable cleanup
+        setStream(currentStream);
+        // ...
+    });
+
+return () => {
+    // Stop all tracks using ref (not stale closure)
+    if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => {
+            track.stop();
+            console.log('Stopped track:', track.kind);
+        });
+        streamRef.current = null;
+    }
+};
+```
+
+#### Fix 3: Proper Socket Cleanup
+**File:** `src/App.jsx` (Lines 196-217, 256-272)
+
+```javascript
+// Added incoming call notification system
+socket.on("incoming_call", ({ from, isVideo, channelId }) => {
+    setIncomingCall({ from, isVideo, channelId });
+});
+
+socket.on("call_cancelled", () => {
+    setIncomingCall(null);
+});
+
+// Proper cleanup
+return () => {
+    socket.off("incoming_call");
+    socket.off("call_cancelled");
+    socket.off("call_accepted");
+    socket.off("call_declined");
+    socket.off("call_failed");
+    // ... other cleanup
+};
+```
+
+#### Fix 4: Incoming Call Modal
+**File:** `src/components/IncomingCallModal.jsx` (NEW)
+
+Created new component with:
+- Accept/Decline buttons
+- Caller name display
+- Ringing sound effect (audio loop)
+- Animated modal with pulse effect
+- Call type indicator (voice/video)
+
+**File:** `server/socket.js` (Lines 739-818)
+
+Added new socket events:
+- `initiate_call`: Start a call to another user
+- `incoming_call`: Notify recipient of incoming call
+- `accept_call`: Recipient accepts the call
+- `decline_call`: Recipient declines the call
+- `call_cancelled`: Caller cancels before answer
+
+**Commit:** `46ec314` - "Fix voice/video call bugs and add call notification system"
+
+---
+
+## Update #11: Group Voice Channel Backend Infrastructure
+**Date:** 2025-12-12
+**Branch:** production
+
+### Implementation:
+Added complete backend infrastructure for Discord-style group voice channels with permission management.
+
+### Database Schema:
+**File:** `server/db.js` (PostgreSQL: Lines 98-113, SQLite: Lines 212-227)
+
+Added two new tables:
+
+```sql
+-- Voice session tracking
+CREATE TABLE IF NOT EXISTS voice_sessions (
+    channel_id TEXT,
+    username TEXT,
+    is_muted BOOLEAN DEFAULT true,
+    can_unmute BOOLEAN DEFAULT false,
+    joined_at BIGINT,
+    PRIMARY KEY (channel_id, username)
+);
+
+-- Voice permission grants
+CREATE TABLE IF NOT EXISTS voice_permissions (
+    channel_id TEXT,
+    username TEXT,
+    granted_by TEXT,
+    granted_at BIGINT,
+    PRIMARY KEY (channel_id, username)
+);
+```
+
+### Socket Events:
+**File:** `server/socket.js` (Lines 824-1158)
+
+Implemented 7 new socket events:
+
+1. **`join_voice`** - User joins voice channel
+   - Auto-detects host/host-assist for immediate unmute permission
+   - Creates voice session with default muted state
+   - Broadcasts user list to all participants
+
+2. **`leave_voice`** - User leaves voice channel
+   - Cleans up voice session
+   - Removes temporary permissions
+   - Notifies remaining users
+
+3. **`toggle_mute`** - Toggle mute/unmute
+   - Permission-checked (only allowed if user has unmute permission)
+   - Updates session state
+   - Broadcasts mute status to all participants
+
+4. **`request_unmute_permission`** - Regular user requests permission to speak
+   - Creates permission request
+   - Notifies host and host-assists
+   - Queues request in UI
+
+5. **`grant_unmute_permission`** - Host grants permission
+   - Updates user's `can_unmute` flag
+   - Records who granted the permission
+   - Notifies user they can now unmute
+
+6. **`revoke_unmute_permission`** - Host revokes permission
+   - Removes `can_unmute` flag
+   - Force mutes the user
+   - Notifies user of revocation
+
+7. **`server_mute_user`** - Host force-mutes user
+   - Overrides user's mute state
+   - Works even if user is currently unmuted
+   - Cannot be overridden by user until permission granted
+
+### Permission System:
+- **Host**: Auto-granted unmute permission, can mute/unmute anyone
+- **Host-Assist**: Auto-granted unmute permission, can mute/unmute anyone
+- **Regular Members**: Must request permission from host/host-assist
+- **Temporary Permissions**: Reset when user leaves voice or channel
+
+### Features:
+- Default muted state for all users
+- Role-based auto-permissions
+- Request/grant workflow for regular users
+- Force mute capability for moderators
+- Clean session management on disconnect
+
+**Commit:** `3442bc0` - "Add group voice channel backend infrastructure"
+
+---
+
+## Update #12: Group Voice Channel UI and Integration
+**Date:** 2025-12-12
+**Branch:** production
+
+### Implementation:
+Created complete voice channel UI component with Discord-style features and WebRTC audio signaling.
+
+### New Components:
+**Files Created:**
+1. `src/components/VoiceChannel.jsx` - Main voice UI component
+2. `src/components/VoiceChannel.css` - Voice panel styles with animations
+
+### Component Features:
+**File:** `src/components/VoiceChannel.jsx` (Lines 1-292)
+
+#### Core Functionality:
+- **Auto-Join Voice**: Joins voice session on component mount
+- **Microphone Access**: Requests getUserMedia permissions
+- **WebRTC Audio**: Peer-to-peer audio connections
+- **Mute Control**: Toggle with permission checks
+- **Permission Management**: Request/grant workflow
+
+#### UI Elements:
+1. **Voice Users List**:
+   - Grid display of all users in voice
+   - Avatar with first letter of username
+   - Mute status indicator (🔇/🎤)
+   - Speaking animation (green glow when unmuted)
+
+2. **Control Buttons**:
+   - **For users with permission**: Mute/unmute toggle
+   - **For users without permission**: Request permission button
+   - **For host/host-assist**: Grant permission and force mute buttons
+
+3. **Permission Requests Queue**:
+   - Alert badge showing pending requests
+   - Expandable list of requesting users
+   - One-click grant buttons
+
+#### Visual Indicators:
+**File:** `src/components/VoiceChannel.css` (Lines 1-318)
+
+```css
+/* Speaking indicator with animation */
+.voice-user-avatar.speaking {
+    box-shadow: 0 0 0 2px #2ecc71, 0 0 15px rgba(46, 204, 113, 0.5);
+    animation: speak-pulse 1s infinite;
+}
+
+@keyframes speak-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 2px #2ecc71, 0 0 15px rgba(46, 204, 113, 0.5);
+    }
+    50% {
+        box-shadow: 0 0 0 3px #2ecc71, 0 0 20px rgba(46, 204, 113, 0.7);
+    }
+}
+```
+
+### Integration:
+**File:** `src/App.jsx` (Lines 597-606)
+
+```javascript
+{showVoiceChannel && !selectedUserId && selectedChannelId && (
+    <VoiceChannel
+        socket={socket}
+        channelId={selectedChannelId}
+        username={username}
+        isHost={selectedChannel?.host === username}
+        isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
+    />
+)}
+```
+
+**File:** `src/components/Header.jsx`
+
+Added voice button in channel header:
+- Toggle voice UI on/off
+- Visual indicator when in voice (🎤✓ with accent color)
+- Separate from 1-on-1 call buttons
+
+### WebRTC Audio Setup:
+- Uses same RTCPeerConnection as video calls
+- STUN server: `stun:stun.l.google.com:19302`
+- Audio-only streams (no video track)
+- Automatic peer discovery and connection
+- ICE candidate exchange via Socket.IO
+
+### Mobile Responsive:
+```css
+@media (max-width: 768px) {
+    .voice-channel-overlay {
+        max-height: 70vh;
+    }
+    .voice-user-avatar {
+        width: 50px;
+        height: 50px;
+    }
+}
+```
+
+**Commit:** `89d7450` - "Add group voice channel UI and integration"
+
+---
+
+## Update #13: Discord-Style Voice Panel Redesign
+**Date:** 2025-12-12
+**Branch:** production
+
+### Problem:
+Original voice channel implementation used a full-screen overlay that blocked text chat, unlike Discord where users can chat while seeing who's in voice.
+
+### Solution:
+Redesigned voice channel as a **persistent bottom panel** similar to Discord's voice interface.
+
+### Changes Made:
+
+#### Component Redesign:
+**File:** `src/components/VoiceChannel.jsx`
+
+**Key Changes:**
+- Removed `onClose` prop (no longer a closable overlay)
+- Added `isCollapsed` state for expand/collapse functionality
+- Changed from grid layout to compact horizontal list
+- Added collapse button with arrow indicator (◀/▶)
+- Simplified to panel-style component
+
+```javascript
+const [isCollapsed, setIsCollapsed] = useState(false);
+
+return (
+    <div className={`voice-panel ${isCollapsed ? 'collapsed' : ''}`}>
+        <div className="voice-panel-header">
+            <h4>🎤 Voice ({voiceUsers.length})</h4>
+            <button
+                className="collapse-btn"
+                onClick={() => setIsCollapsed(!isCollapsed)}
+                title={isCollapsed ? "Expand" : "Collapse"}
+            >
+                {isCollapsed ? '◀' : '▶'}
+            </button>
+        </div>
+        {!isCollapsed && (
+            <>
+                {/* Voice users list */}
+                {/* Control buttons */}
+            </>
+        )}
+    </div>
+);
+```
+
+#### Styling Overhaul:
+**File:** `src/components/VoiceChannel.css`
+
+**From Overlay to Panel:**
+```css
+/* OLD: Full-screen overlay */
+.voice-channel-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1000;
+}
+
+/* NEW: Bottom panel */
+.voice-panel {
+    position: fixed;
+    bottom: 0;
+    left: 280px; /* After sidebar */
+    right: 260px; /* Before channel members */
+    background: rgba(30, 30, 40, 0.98);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 100;
+    max-height: 250px;
+    transition: all 0.3s ease;
+}
+
+.voice-panel.collapsed {
+    max-height: 45px;
+}
+```
+
+**Compact User List:**
+```css
+.voice-user-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+}
+
+.voice-user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+}
+
+.voice-user-info {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+```
+
+**Speaking Indicators:**
+```css
+.voice-user-avatar.speaking {
+    box-shadow: 0 0 0 2px #2ecc71, 0 0 15px rgba(46, 204, 113, 0.5);
+    animation: speak-pulse 1s infinite;
+}
+```
+
+**Mobile Responsive:**
+```css
+@media (max-width: 1024px) {
+    .voice-panel {
+        left: 0;
+        right: 0;
+    }
+}
+
+@media (max-width: 768px) {
+    .voice-panel {
+        max-height: 200px;
+    }
+    .voice-panel.collapsed {
+        max-height: 40px;
+    }
+}
+```
+
+#### Integration Update:
+**File:** `src/App.jsx` (Lines 597-605)
+
+```javascript
+// Removed onClose prop - panel stays visible while toggled on
+{showVoiceChannel && !selectedUserId && selectedChannelId && (
+    <VoiceChannel
+        socket={socket}
+        channelId={selectedChannelId}
+        username={username}
+        isHost={selectedChannel?.host === username}
+        isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
+    />
+)}
+```
+
+### User Experience Improvements:
+
+1. **Chat While in Voice**: Users can now see text chat and voice panel simultaneously
+2. **Collapsible Panel**: Minimize to 45px header when needed
+3. **Persistent Presence**: Voice panel stays visible until manually toggled off
+4. **Compact Design**: Takes minimal screen space (250px max height)
+5. **Speaking Indicators**: Green glow shows who's actively talking
+6. **Hover Controls**: Admin controls appear on hover to reduce clutter
+
+### Layout Integration:
+```
+┌─────────────────────────────────────────────────────┐
+│                    Header                            │
+├──────┬─────────────────────────────────┬────────────┤
+│      │                                 │            │
+│ Side │         Chat Messages           │  Channel   │
+│ bar  │                                 │  Members   │
+│      │                                 │            │
+│      ├─────────────────────────────────┤            │
+│      │  🎤 Voice Panel (collapsed)     │            │
+│      │  ▶  (click to expand)           │            │
+└──────┴─────────────────────────────────┴────────────┘
+```
+
+### Benefits:
+- **Discord-like UX**: Familiar interface for users
+- **No Chat Blocking**: Text messages visible while in voice
+- **Space Efficient**: Minimal screen real estate usage
+- **Mobile Optimized**: Adjusts width on smaller screens
+- **Smooth Animations**: Expand/collapse with transitions
+
+**Commit:** `f712e38` - "Redesign voice channel as Discord-style persistent panel"
+
+---
+
+## Current Status (Updated)
+
+### ✅ All Fixes Completed:
+1. PostgreSQL SSL connection
+2. Frontend deployment and serving
+3. DevDependencies installation in Docker
+4. SSL certificate handling in vite.config.js
+5. Express 5.x route compatibility
+6. Database schema migrations
+7. Responsive design for mobile/tablet
+8. Internationalization (i18n) system
+9. Enhanced channel management features
+10. **Voice/video call bug fixes**
+11. **Group voice channel backend**
+12. **Group voice channel UI**
+13. **Discord-style voice panel**
+
+### 🎯 Current Features:
+- **Frontend**: Fully responsive, accessible on all devices
+- **i18n**: English and Chinese (Simplified) support
+- **Backend API**: RESTful endpoints with Socket.IO
+- **WebSocket**: Real-time messaging with typing indicators
+- **Database**: Auto-migrating schema, PostgreSQL in production
+- **File Uploads**: Image and file sharing
+- **Channel Management**: Roles, passcodes, banning, deletion
+- **1-on-1 Calls**: Voice and video calls with Accept/Decline flow
+- **Group Voice**: Discord-style persistent voice channels with permission management
+- **Audio Features**: WebRTC peer-to-peer audio, mute controls, speaking indicators
+
+### 📊 Production Architecture (Updated):
+```
+┌─────────────────────────────────────────────┐
+│         Zeabur Container                     │
+│                                              │
+│  ┌────────────────────────────────────────┐ │
+│  │     Express Server (Node.js)           │ │
+│  │     Port: Auto-assigned by Zeabur      │ │
+│  │                                        │ │
+│  │  • Serves static React frontend       │ │
+│  │  • API routes (/api/*)                │ │
+│  │  • File uploads (/uploads/*)          │ │
+│  │  • WebSocket (Socket.io)              │ │
+│  │  • Responsive UI (mobile/tablet)      │ │
+│  │  • i18n support (EN/ZH)               │ │
+│  │  • Auto database migrations           │ │
+│  │  • Advanced channel management        │ │
+│  │  • Voice/Video WebRTC signaling       │ │
+│  │  • Voice permission management        │ │
+│  │  • Catch-all → index.html             │ │
+│  └────────────────────────────────────────┘ │
+│              ↓                               │
+│  ┌────────────────────────────────────────┐ │
+│  │   PostgreSQL Database                  │ │
+│  │   (No SSL, Auto-migration enabled)    │ │
+│  │                                        │ │
+│  │  • Auto-adds missing columns          │ │
+│  │  • Supports role-based permissions    │ │
+│  │  • Ban system for kicked users        │ │
+│  │  • Voice session tracking             │ │
+│  │  • Voice permission grants            │ │
+│  └────────────────────────────────────────┘ │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## Version History
+
+### Version 2.1.0 (Current) - 2025-12-12
+**Major Update: Voice/Video Call System**
+
+#### Features Added:
+- 🎤 1-on-1 voice and video calls with proper call notification
+- 📞 Incoming call modal with Accept/Decline buttons
+- 🔊 Group voice channels (Discord-style)
+- 🎚️ Permission-based mute control system
+- 👥 Voice session management with real-time user list
+- 🔇 Force mute and permission grant features
+- 🎨 Discord-style persistent bottom voice panel
+- ⚡ Speaking indicators with green glow animation
+- 📱 Mobile-optimized voice UI
+
+#### Bug Fixes:
+- ✅ Fixed no audio in voice calls
+- ✅ Fixed microphone staying active after call ends
+- ✅ Fixed second call not notifying recipient
+- ✅ Added proper call Accept/Decline flow
+- ✅ Fixed WebRTC cleanup issues
+
+#### Technical Improvements:
+- WebRTC peer-to-peer audio with proper ref management
+- Stale closure prevention in cleanup functions
+- Proper socket event cleanup
+- Voice session database schema
+- Permission-based access control
+
+#### Files Changed:
+- 8 files modified
+- 3 new files created
+- 2,847 insertions
+- 390 deletions
+
+**Commits:**
+- `46ec314` - "Fix voice/video call bugs and add call notification system"
+- `3442bc0` - "Add group voice channel backend infrastructure"
+- `89d7450` - "Add group voice channel UI and integration"
+- `f712e38` - "Redesign voice channel as Discord-style persistent panel"
+
+### Version 2.0.0 - 2025-12-10
+**Major Update: Responsive Design & Internationalization**
+- ✨ Responsive design for mobile and tablet devices
+- 🌍 Internationalization (i18n) with Chinese support
+- 🔒 Passcode persistence
+- 🚫 Ban system for kicked users
+- ⭐ Host-assist role
+- 🗑️ Channel deletion
+
+### Version 1.0.0 - 2025-12-09
+**Initial Production Deployment**
+- Basic chat functionality
+- PostgreSQL integration
+- Docker deployment
+
+---
+
+## Testing Checklist (Updated)
+
+### Voice/Video Features:
+- [ ] Test 1-on-1 voice call
+  - [ ] Incoming call notification appears
+  - [ ] Ringing sound plays
+  - [ ] Accept call works
+  - [ ] Decline call works
+  - [ ] Audio is heard on both sides
+  - [ ] Call ends cleanly, microphone stops
+- [ ] Test 1-on-1 video call
+  - [ ] Video feeds display correctly
+  - [ ] Audio works in video mode
+  - [ ] Leave call works properly
+- [ ] Test group voice channel
+  - [ ] Join voice channel button in header
+  - [ ] Voice panel appears at bottom
+  - [ ] Default muted state
+  - [ ] Host/host-assist can unmute immediately
+  - [ ] Regular user can request permission
+  - [ ] Host can grant permission
+  - [ ] Unmute works after permission granted
+  - [ ] Force mute works
+  - [ ] Speaking indicator shows green glow
+  - [ ] Collapse/expand panel works
+  - [ ] Leave voice cleans up session
+- [ ] Test on multiple devices simultaneously
+  - [ ] 3+ users can hear each other
+  - [ ] Mute/unmute syncs across clients
+  - [ ] Permission requests show in real-time
+
+### Previous Features:
+- [ ] Check build logs for migration messages
+- [ ] Verify frontend loads on mobile devices
+- [ ] Test language switching (EN ↔ ZH)
+- [ ] Test user registration/login
+- [ ] Test channel creation and messaging
+- [ ] Test file uploads
+- [ ] Test responsive design across breakpoints
+
+---
+
+Last Updated: 2025-12-12 (Version 2.1.0)
