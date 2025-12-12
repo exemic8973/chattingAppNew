@@ -601,7 +601,6 @@ function App() {
             username={username}
             isHost={selectedChannel?.host === username}
             isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
-            onClose={() => setShowVoiceChannel(false)}
           />
         )}
       </div>

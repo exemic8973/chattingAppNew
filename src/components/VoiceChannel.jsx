@@ -6,16 +6,15 @@ const VoiceChannel = ({
     channelId,
     username,
     isHost,
-    isHostAssist,
-    onClose
+    isHostAssist
 }) => {
     const [voiceUsers, setVoiceUsers] = useState([]);
     const [isMuted, setIsMuted] = useState(true);
     const [canUnmute, setCanUnmute] = useState(isHost || isHostAssist);
     const [stream, setStream] = useState(null);
-    const [peers, setPeers] = useState([]);
     const [showPermissionRequests, setShowPermissionRequests] = useState(false);
     const [permissionRequests, setPermissionRequests] = useState([]);
+    const [isCollapsed, setIsCollapsed] = useState(false);
 
     const streamRef = useRef(null);
     const peersRef = useRef([]);
@@ -45,8 +44,6 @@ const VoiceChannel = ({
                 socket.on("voice_user_left", (data) => {
                     if (data.channelId === channelId) {
                         setVoiceUsers(data.users || []);
-                        // Remove peer connection
-                        setPeers(prev => prev.filter(p => p.username !== data.username));
                     }
                 });
 
@@ -58,7 +55,6 @@ const VoiceChannel = ({
                                 : u
                         ));
                         if (data.username === username && data.forcedBy) {
-                            // We were force muted
                             setIsMuted(true);
                             if (streamRef.current) {
                                 streamRef.current.getAudioTracks().forEach(track => {
@@ -70,16 +66,14 @@ const VoiceChannel = ({
                 });
 
                 socket.on("voice_permission_updated", (data) => {
-                    if (data.channelId === channelId) {
-                        if (data.username === username) {
-                            setCanUnmute(data.canUnmute);
-                            if (data.isMuted !== undefined) {
-                                setIsMuted(data.isMuted);
-                                if (data.isMuted && streamRef.current) {
-                                    streamRef.current.getAudioTracks().forEach(track => {
-                                        track.enabled = false;
-                                    });
-                                }
+                    if (data.channelId === channelId && data.username === username) {
+                        setCanUnmute(data.canUnmute);
+                        if (data.isMuted !== undefined) {
+                            setIsMuted(data.isMuted);
+                            if (data.isMuted && streamRef.current) {
+                                streamRef.current.getAudioTracks().forEach(track => {
+                                    track.enabled = false;
+                                });
                             }
                         }
                     }
@@ -88,7 +82,6 @@ const VoiceChannel = ({
                 socket.on("unmute_permission_granted", (data) => {
                     if (data.channelId === channelId) {
                         setCanUnmute(true);
-                        alert(`You can now unmute in this channel (granted by ${data.grantedBy})`);
                     }
                 });
 
@@ -101,7 +94,6 @@ const VoiceChannel = ({
                                 track.enabled = false;
                             });
                         }
-                        alert(`Your unmute permission was revoked by ${data.revokedBy}`);
                     }
                 });
 
@@ -113,14 +105,12 @@ const VoiceChannel = ({
                                 track.enabled = false;
                             });
                         }
-                        alert(`You were muted by ${data.by}`);
                     }
                 });
 
                 socket.on("unmute_permission_requested", (data) => {
                     if (data.channelId === channelId && (isHost || isHostAssist)) {
                         setPermissionRequests(prev => {
-                            // Avoid duplicates
                             if (prev.some(r => r.username === data.username)) {
                                 return prev;
                             }
@@ -130,20 +120,15 @@ const VoiceChannel = ({
                 });
 
                 socket.on("permission_request_sent", () => {
-                    alert("Permission request sent to channel admins");
+                    // Silent - user will see status change
                 });
 
                 socket.on("voice_error", (data) => {
-                    alert(`Voice error: ${data.message}`);
+                    console.error("Voice error:", data.message);
                 });
-
-                // WebRTC signaling would go here (similar to VideoCall.jsx)
-                // For simplicity, this basic version doesn't include full WebRTC peer-to-peer
-                // In production, you'd add the same peer connection logic as VideoCall.jsx
             })
             .catch((err) => {
                 console.error("Error accessing microphone:", err);
-                alert("Could not access microphone. Please check permissions.");
             });
 
         return () => {
@@ -199,14 +184,6 @@ const VoiceChannel = ({
         setPermissionRequests(prev => prev.filter(r => r.username !== targetUsername));
     };
 
-    const revokePermission = (targetUsername) => {
-        socket.emit("revoke_unmute_permission", {
-            channelId,
-            username: targetUsername,
-            revokedBy: username
-        });
-    };
-
     const muteUser = (targetUsername) => {
         socket.emit("server_mute_user", {
             channelId,
@@ -216,106 +193,98 @@ const VoiceChannel = ({
     };
 
     return (
-        <div className="voice-channel-overlay">
-            <div className="voice-channel-container">
-                <div className="voice-header">
-                    <h3>🎤 Voice Channel</h3>
-                    <button onClick={onClose} className="close-btn">❌</button>
-                </div>
+        <div className={`voice-panel ${isCollapsed ? 'collapsed' : ''}`}>
+            <div className="voice-panel-header">
+                <h4>🎤 Voice ({voiceUsers.length})</h4>
+                <button
+                    className="collapse-btn"
+                    onClick={() => setIsCollapsed(!isCollapsed)}
+                    title={isCollapsed ? "Expand" : "Collapse"}
+                >
+                    {isCollapsed ? '◀' : '▶'}
+                </button>
+            </div>
 
-                <div className="voice-users-grid">
-                    {voiceUsers.map(user => (
-                        <div key={user.username} className="voice-user-card">
-                            <div className={`voice-avatar ${user.is_muted ? 'muted' : 'speaking'}`}>
-                                {user.username[0].toUpperCase()}
-                            </div>
-                            <span className="voice-username">{user.username}</span>
-                            <span className="voice-status">
-                                {user.is_muted ? '🔇 Muted' : '🎤 Unmuted'}
-                            </span>
-                            {(isHost || isHostAssist) && user.username !== username && (
-                                <div className="admin-controls">
-                                    <button
-                                        onClick={() => muteUser(user.username)}
-                                        className="mute-user-btn"
-                                        title="Force Mute"
-                                    >
-                                        🔇
-                                    </button>
-                                    {user.can_unmute ? (
-                                        <button
-                                            onClick={() => revokePermission(user.username)}
-                                            className="revoke-btn"
-                                            title="Revoke Permission"
-                                        >
-                                            ❌
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={() => grantPermission(user.username)}
-                                            className="grant-btn"
-                                            title="Grant Permission"
-                                        >
-                                            ✅
-                                        </button>
-                                    )}
+            {!isCollapsed && (
+                <>
+                    <div className="voice-users-list">
+                        {voiceUsers.map(user => (
+                            <div key={user.username} className="voice-user-item">
+                                <div className={`voice-user-avatar ${!user.is_muted ? 'speaking' : ''}`}>
+                                    {user.username[0].toUpperCase()}
                                 </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
-
-                <div className="voice-controls">
-                    {canUnmute ? (
-                        <button
-                            onClick={toggleMute}
-                            className={`mute-btn ${isMuted ? 'muted' : 'unmuted'}`}
-                        >
-                            {isMuted ? '🔇 Unmute' : '🎤 Mute'}
-                        </button>
-                    ) : (
-                        <>
-                            <button disabled className="mute-btn muted">
-                                🔇 Muted (No Permission)
-                            </button>
-                            <button onClick={requestPermission} className="request-btn">
-                                🙋 Request Permission
-                            </button>
-                        </>
-                    )}
-
-                    {(isHost || isHostAssist) && permissionRequests.length > 0 && (
-                        <button
-                            onClick={() => setShowPermissionRequests(!showPermissionRequests)}
-                            className="requests-btn"
-                        >
-                            🔔 {permissionRequests.length} Request{permissionRequests.length > 1 ? 's' : ''}
-                        </button>
-                    )}
-                </div>
-
-                {showPermissionRequests && permissionRequests.length > 0 && (
-                    <div className="permission-requests">
-                        <h4>Unmute Requests</h4>
-                        {permissionRequests.map(req => (
-                            <div key={req.username} className="request-item">
-                                <span>{req.username}</span>
-                                <div className="request-actions">
-                                    <button onClick={() => grantPermission(req.username)} className="grant-request-btn">
-                                        ✅ Grant
-                                    </button>
-                                    <button
-                                        onClick={() => setPermissionRequests(prev => prev.filter(r => r.username !== req.username))}
-                                        className="deny-request-btn"
-                                    >
-                                        ❌ Deny
-                                    </button>
+                                <div className="voice-user-info">
+                                    <span className="voice-user-name">{user.username}</span>
+                                    <span className="voice-user-status">
+                                        {user.is_muted ? '🔇' : '🎤'}
+                                    </span>
                                 </div>
+                                {(isHost || isHostAssist) && user.username !== username && (
+                                    <div className="voice-user-controls">
+                                        <button
+                                            onClick={() => muteUser(user.username)}
+                                            className="control-btn"
+                                            title="Mute"
+                                        >
+                                            🔇
+                                        </button>
+                                        {!user.can_unmute && (
+                                            <button
+                                                onClick={() => grantPermission(user.username)}
+                                                className="control-btn grant"
+                                                title="Grant Permission"
+                                            >
+                                                ✅
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
-                )}
-            </div>
+
+                    {permissionRequests.length > 0 && (isHost || isHostAssist) && (
+                        <div className="permission-alerts">
+                            <button
+                                onClick={() => setShowPermissionRequests(!showPermissionRequests)}
+                                className="permission-alert-btn"
+                            >
+                                🔔 {permissionRequests.length} Request{permissionRequests.length > 1 ? 's' : ''}
+                            </button>
+                            {showPermissionRequests && (
+                                <div className="permission-requests-list">
+                                    {permissionRequests.map(req => (
+                                        <div key={req.username} className="permission-request-item">
+                                            <span>{req.username}</span>
+                                            <button onClick={() => grantPermission(req.username)}>✅</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="voice-panel-controls">
+                        {canUnmute ? (
+                            <button
+                                onClick={toggleMute}
+                                className={`voice-control-btn ${isMuted ? 'muted' : 'unmuted'}`}
+                                title={isMuted ? 'Unmute' : 'Mute'}
+                            >
+                                {isMuted ? '🔇' : '🎤'}
+                            </button>
+                        ) : (
+                            <button
+                                onClick={requestPermission}
+                                className="voice-control-btn request"
+                                title="Request Permission"
+                            >
+                                🙋
+                            </button>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     );
 };
