@@ -94,6 +94,23 @@ export async function initializeDatabase() {
                 read_at BIGINT,
                 PRIMARY KEY (message_id, username)
             );
+
+            CREATE TABLE IF NOT EXISTS voice_sessions (
+                channel_id TEXT,
+                username TEXT,
+                is_muted BOOLEAN DEFAULT true,
+                can_unmute BOOLEAN DEFAULT false,
+                joined_at BIGINT,
+                PRIMARY KEY (channel_id, username)
+            );
+
+            CREATE TABLE IF NOT EXISTS voice_permissions (
+                channel_id TEXT,
+                username TEXT,
+                granted_by TEXT,
+                granted_at BIGINT,
+                PRIMARY KEY (channel_id, username)
+            );
         `);
 
         // Seed initial channels if empty
@@ -227,6 +244,23 @@ export async function initializeDatabase() {
                 username TEXT,
                 read_at INTEGER,
                 PRIMARY KEY (message_id, username)
+            );
+
+            CREATE TABLE IF NOT EXISTS voice_sessions (
+                channel_id TEXT,
+                username TEXT,
+                is_muted INTEGER DEFAULT 1,
+                can_unmute INTEGER DEFAULT 0,
+                joined_at INTEGER,
+                PRIMARY KEY (channel_id, username)
+            );
+
+            CREATE TABLE IF NOT EXISTS voice_permissions (
+                channel_id TEXT,
+                username TEXT,
+                granted_by TEXT,
+                granted_at INTEGER,
+                PRIMARY KEY (channel_id, username)
             );
         `);
 

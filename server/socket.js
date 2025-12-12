@@ -819,6 +819,344 @@ export function setupSocket(io) {
 
         // Note: Call cancellation on disconnect is handled in the main disconnect handler below
 
+        // --- Group Voice Channel Events ---
+
+        socket.on("join_voice", async (data) => {
+            const { channelId, username } = data;
+
+            try {
+                // Check if user is in the text channel first
+                if (!users[socket.id] || users[socket.id].room !== channelId) {
+                    socket.emit("voice_error", { message: "You must be in the channel to join voice" });
+                    return;
+                }
+
+                // Get channel info
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                if (!channel) {
+                    socket.emit("voice_error", { message: "Channel not found" });
+                    return;
+                }
+
+                const isHost = channel.host === username;
+                const hostAssistInvite = await db.get(
+                    'SELECT * FROM channel_invites WHERE channel_id = ? AND username = ? AND role = ? AND status = ?',
+                    channelId, username, 'host_assist', 'accepted'
+                );
+                const isHostAssist = !!hostAssistInvite;
+
+                // Check if user has permission
+                const hasPermission = isHost || isHostAssist;
+                const permissionRecord = await db.get(
+                    'SELECT * FROM voice_permissions WHERE channel_id = ? AND username = ?',
+                    channelId, username
+                );
+
+                // Add to voice session
+                await db.run(
+                    'INSERT OR REPLACE INTO voice_sessions (channel_id, username, is_muted, can_unmute, joined_at) VALUES (?, ?, ?, ?, ?)',
+                    channelId, username, 1, hasPermission || !!permissionRecord ? 1 : 0, Date.now()
+                );
+
+                // Join voice room (for WebRTC signaling)
+                const voiceRoomId = `voice_${channelId}`;
+                socket.join(voiceRoomId);
+
+                // Get all users currently in voice
+                const voiceUsers = await db.all(
+                    'SELECT * FROM voice_sessions WHERE channel_id = ?',
+                    channelId
+                );
+
+                // Notify everyone in voice
+                io.to(voiceRoomId).emit("voice_user_joined", {
+                    channelId,
+                    username,
+                    users: voiceUsers
+                });
+
+                // Send WebRTC peer list to new user
+                const room = io.sockets.adapter.rooms.get(voiceRoomId);
+                const otherUsers = room ? Array.from(room).filter(id => id !== socket.id) : [];
+                socket.emit("voice_peers", { users: otherUsers });
+
+                console.log(`${username} joined voice in ${channelId}`);
+            } catch (e) {
+                console.error("Join voice error:", e);
+                socket.emit("voice_error", { message: "Failed to join voice" });
+            }
+        });
+
+        socket.on("leave_voice", async (data) => {
+            const { channelId, username } = data;
+
+            try {
+                // Remove from voice session
+                await db.run(
+                    'DELETE FROM voice_sessions WHERE channel_id = ? AND username = ?',
+                    channelId, username
+                );
+
+                // Leave voice room
+                const voiceRoomId = `voice_${channelId}`;
+                socket.leave(voiceRoomId);
+
+                // Get remaining users
+                const voiceUsers = await db.all(
+                    'SELECT * FROM voice_sessions WHERE channel_id = ?',
+                    channelId
+                );
+
+                // Notify everyone
+                io.to(voiceRoomId).emit("voice_user_left", {
+                    channelId,
+                    username,
+                    users: voiceUsers
+                });
+
+                console.log(`${username} left voice in ${channelId}`);
+            } catch (e) {
+                console.error("Leave voice error:", e);
+            }
+        });
+
+        socket.on("toggle_mute", async (data) => {
+            const { channelId, username, isMuted } = data;
+
+            try {
+                // Check if user can unmute
+                const session = await db.get(
+                    'SELECT can_unmute FROM voice_sessions WHERE channel_id = ? AND username = ?',
+                    channelId, username
+                );
+
+                if (!session) {
+                    socket.emit("voice_error", { message: "Not in voice session" });
+                    return;
+                }
+
+                // If trying to unmute but don't have permission
+                if (!isMuted && !session.can_unmute) {
+                    socket.emit("voice_error", { message: "You don't have permission to unmute" });
+                    return;
+                }
+
+                // Update mute status
+                await db.run(
+                    'UPDATE voice_sessions SET is_muted = ? WHERE channel_id = ? AND username = ?',
+                    isMuted ? 1 : 0, channelId, username
+                );
+
+                // Notify everyone in voice
+                const voiceRoomId = `voice_${channelId}`;
+                io.to(voiceRoomId).emit("voice_user_muted", {
+                    channelId,
+                    username,
+                    isMuted
+                });
+
+                console.log(`${username} ${isMuted ? 'muted' : 'unmuted'} in ${channelId}`);
+            } catch (e) {
+                console.error("Toggle mute error:", e);
+            }
+        });
+
+        socket.on("request_unmute_permission", async (data) => {
+            const { channelId, username } = data;
+
+            try {
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                if (!channel) return;
+
+                // Find host and host-assists
+                const hostAssists = await db.all(
+                    'SELECT username FROM channel_invites WHERE channel_id = ? AND role = ? AND status = ?',
+                    channelId, 'host_assist', 'accepted'
+                );
+
+                const admins = [channel.host, ...hostAssists.map(ha => ha.username)];
+
+                // Notify all admins
+                admins.forEach(adminUsername => {
+                    const adminEntry = Object.entries(users).find(([, u]) => u.username === adminUsername);
+                    if (adminEntry) {
+                        const [adminSocketId] = adminEntry;
+                        io.to(adminSocketId).emit("unmute_permission_requested", {
+                            channelId,
+                            username,
+                            timestamp: Date.now()
+                        });
+                    }
+                });
+
+                socket.emit("permission_request_sent");
+                console.log(`${username} requested unmute permission in ${channelId}`);
+            } catch (e) {
+                console.error("Request permission error:", e);
+            }
+        });
+
+        socket.on("grant_unmute_permission", async (data) => {
+            const { channelId, username, grantedBy } = data;
+
+            try {
+                // Verify granter is host or host-assist
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                const hostAssistInvite = await db.get(
+                    'SELECT * FROM channel_invites WHERE channel_id = ? AND username = ? AND role = ? AND status = ?',
+                    channelId, grantedBy, 'host_assist', 'accepted'
+                );
+
+                const isHost = channel && channel.host === grantedBy;
+                const isHostAssist = !!hostAssistInvite;
+
+                if (!isHost && !isHostAssist) {
+                    socket.emit("voice_error", { message: "You don't have permission to grant unmute" });
+                    return;
+                }
+
+                // Grant permission
+                await db.run(
+                    'INSERT OR REPLACE INTO voice_permissions (channel_id, username, granted_by, granted_at) VALUES (?, ?, ?, ?)',
+                    channelId, username, grantedBy, Date.now()
+                );
+
+                // Update voice session
+                await db.run(
+                    'UPDATE voice_sessions SET can_unmute = 1 WHERE channel_id = ? AND username = ?',
+                    channelId, username
+                );
+
+                // Notify the user
+                const userEntry = Object.entries(users).find(([, u]) => u.username === username);
+                if (userEntry) {
+                    const [userSocketId] = userEntry;
+                    io.to(userSocketId).emit("unmute_permission_granted", {
+                        channelId,
+                        grantedBy
+                    });
+                }
+
+                // Notify voice room
+                const voiceRoomId = `voice_${channelId}`;
+                io.to(voiceRoomId).emit("voice_permission_updated", {
+                    channelId,
+                    username,
+                    canUnmute: true
+                });
+
+                console.log(`${grantedBy} granted unmute permission to ${username} in ${channelId}`);
+            } catch (e) {
+                console.error("Grant permission error:", e);
+            }
+        });
+
+        socket.on("revoke_unmute_permission", async (data) => {
+            const { channelId, username, revokedBy } = data;
+
+            try {
+                // Verify revoker is host or host-assist
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                const hostAssistInvite = await db.get(
+                    'SELECT * FROM channel_invites WHERE channel_id = ? AND username = ? AND role = ? AND status = ?',
+                    channelId, revokedBy, 'host_assist', 'accepted'
+                );
+
+                const isHost = channel && channel.host === revokedBy;
+                const isHostAssist = !!hostAssistInvite;
+
+                if (!isHost && !isHostAssist) {
+                    socket.emit("voice_error", { message: "You don't have permission to revoke unmute" });
+                    return;
+                }
+
+                // Revoke permission
+                await db.run(
+                    'DELETE FROM voice_permissions WHERE channel_id = ? AND username = ?',
+                    channelId, username
+                );
+
+                // Update voice session and force mute
+                await db.run(
+                    'UPDATE voice_sessions SET can_unmute = 0, is_muted = 1 WHERE channel_id = ? AND username = ?',
+                    channelId, username
+                );
+
+                // Notify the user
+                const userEntry = Object.entries(users).find(([, u]) => u.username === username);
+                if (userEntry) {
+                    const [userSocketId] = userEntry;
+                    io.to(userSocketId).emit("unmute_permission_revoked", {
+                        channelId,
+                        revokedBy
+                    });
+                }
+
+                // Notify voice room
+                const voiceRoomId = `voice_${channelId}`;
+                io.to(voiceRoomId).emit("voice_permission_updated", {
+                    channelId,
+                    username,
+                    canUnmute: false,
+                    isMuted: true
+                });
+
+                console.log(`${revokedBy} revoked unmute permission from ${username} in ${channelId}`);
+            } catch (e) {
+                console.error("Revoke permission error:", e);
+            }
+        });
+
+        socket.on("server_mute_user", async (data) => {
+            const { channelId, username, mutedBy } = data;
+
+            try {
+                // Verify muter is host or host-assist
+                const channel = await db.get('SELECT host FROM channels WHERE id = ?', channelId);
+                const hostAssistInvite = await db.get(
+                    'SELECT * FROM channel_invites WHERE channel_id = ? AND username = ? AND role = ? AND status = ?',
+                    channelId, mutedBy, 'host_assist', 'accepted'
+                );
+
+                const isHost = channel && channel.host === mutedBy;
+                const isHostAssist = !!hostAssistInvite;
+
+                if (!isHost && !isHostAssist) {
+                    socket.emit("voice_error", { message: "You don't have permission to mute others" });
+                    return;
+                }
+
+                // Force mute
+                await db.run(
+                    'UPDATE voice_sessions SET is_muted = 1 WHERE channel_id = ? AND username = ?',
+                    channelId, username
+                );
+
+                // Notify the user (client must stop their audio track)
+                const userEntry = Object.entries(users).find(([, u]) => u.username === username);
+                if (userEntry) {
+                    const [userSocketId] = userEntry;
+                    io.to(userSocketId).emit("force_muted", {
+                        channelId,
+                        by: mutedBy
+                    });
+                }
+
+                // Notify voice room
+                const voiceRoomId = `voice_${channelId}`;
+                io.to(voiceRoomId).emit("voice_user_muted", {
+                    channelId,
+                    username,
+                    isMuted: true,
+                    forcedBy: mutedBy
+                });
+
+                console.log(`${mutedBy} force muted ${username} in ${channelId}`);
+            } catch (e) {
+                console.error("Server mute error:", e);
+            }
+        });
+
         socket.on('invite_user', async (data) => {
             const { targetUsername, channelId, fromUsername } = data;
 
