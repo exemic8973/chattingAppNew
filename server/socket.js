@@ -734,6 +734,91 @@ export function setupSocket(io) {
             });
         });
 
+        // --- Call Notification System (1-on-1 Calls) ---
+
+        socket.on("initiate_call", (data) => {
+            const { to, channelId, from, isVideo } = data;
+
+            // Find recipient socket
+            let recipientSocketId;
+            if (to) {
+                // 1-on-1 call - find user's socket
+                const recipientEntry = Object.entries(users).find(([, u]) => u.username === to);
+                if (recipientEntry) {
+                    recipientSocketId = recipientEntry[0];
+                }
+            } else {
+                // Broadcast to channel (for future group calls)
+                io.to(channelId).emit("incoming_call", {
+                    from,
+                    isVideo,
+                    channelId
+                });
+                return;
+            }
+
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit("incoming_call", {
+                    from,
+                    isVideo,
+                    channelId
+                });
+
+                // Store call state for cancellation
+                socket.callState = { to, channelId, isVideo };
+                console.log(`Call initiated from ${from} to ${to} (${isVideo ? 'video' : 'voice'})`);
+            } else {
+                socket.emit("call_failed", { reason: "User not online" });
+            }
+        });
+
+        socket.on("accept_call", (data) => {
+            const { from, channelId } = data;
+
+            // Find caller's socket
+            const callerEntry = Object.entries(users).find(([, u]) => u.username === from);
+            if (callerEntry) {
+                const [callerSocketId] = callerEntry;
+                const caller = users[callerSocketId];
+
+                // Emit to both caller and accepter
+                io.to(callerSocketId).emit("call_accepted", {
+                    channelId,
+                    isVideo: caller.callState?.isVideo || false
+                });
+                socket.emit("call_accepted", {
+                    channelId,
+                    isVideo: caller.callState?.isVideo || false
+                });
+
+                console.log(`Call accepted by ${users[socket.id]?.username} from ${from}`);
+
+                // Clear call state
+                if (users[callerSocketId]) {
+                    delete users[callerSocketId].callState;
+                }
+            }
+        });
+
+        socket.on("decline_call", (data) => {
+            const { from } = data;
+
+            // Find caller's socket
+            const callerEntry = Object.entries(users).find(([, u]) => u.username === from);
+            if (callerEntry) {
+                const [callerSocketId] = callerEntry;
+                io.to(callerSocketId).emit("call_declined", { by: users[socket.id]?.username });
+                console.log(`Call declined by ${users[socket.id]?.username} from ${from}`);
+
+                // Clear call state
+                if (users[callerSocketId]) {
+                    delete users[callerSocketId].callState;
+                }
+            }
+        });
+
+        // Note: Call cancellation on disconnect is handled in the main disconnect handler below
+
         socket.on('invite_user', async (data) => {
             const { targetUsername, channelId, fromUsername } = data;
 
@@ -765,6 +850,17 @@ export function setupSocket(io) {
 
         socket.on('disconnect', () => {
             console.log('User Disconnected', socket.id);
+
+            // Cancel any pending calls
+            if (socket.callState) {
+                const { to } = socket.callState;
+                const recipientEntry = Object.entries(users).find(([, u]) => u.username === to);
+                if (recipientEntry) {
+                    const [recipientSocketId] = recipientEntry;
+                    io.to(recipientSocketId).emit("call_cancelled");
+                }
+                delete socket.callState;
+            }
 
             // Get user info before deleting
             const user = users[socket.id];

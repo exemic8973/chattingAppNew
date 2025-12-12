@@ -9,6 +9,7 @@ import ProfileModal from './components/ProfileModal';
 import SearchModal from './components/SearchModal';
 import ChannelMembers from './components/ChannelMembers';
 import InviteUserModal from './components/InviteUserModal';
+import IncomingCallModal from './components/IncomingCallModal';
 import { initialData, initialUsers } from './data';
 
 // Connect to backend
@@ -55,6 +56,7 @@ function App() {
   const [currentMessages, setCurrentMessages] = useState([]);
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
   const [isVoiceCall, setIsVoiceCall] = useState(false);
+  const [incomingCall, setIncomingCall] = useState(null); // { from, isVideo, channelId }
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [channelMembers, setChannelMembers] = useState([]);
   const chatAreaRef = useRef(null);
@@ -189,9 +191,27 @@ function App() {
       }
     });
 
-    socket.on("call_received", () => {
+    // Incoming call notification system
+    socket.on("incoming_call", ({ from, isVideo, channelId }) => {
+      setIncomingCall({ from, isVideo, channelId });
+    });
+
+    socket.on("call_cancelled", () => {
+      setIncomingCall(null);
+    });
+
+    socket.on("call_accepted", ({ channelId, isVideo }) => {
+      setIsVoiceCall(!isVideo);
       setIsVideoCallActive(true);
-      setIsVoiceCall(false);
+      setIncomingCall(null);
+    });
+
+    socket.on("call_declined", ({ by }) => {
+      alert(`Call was declined by ${by}`);
+    });
+
+    socket.on("call_failed", ({ reason }) => {
+      alert(`Call failed: ${reason}`);
     });
 
     socket.on("invitation_received", (data) => {
@@ -238,7 +258,11 @@ function App() {
       socket.off("update_channel_list");
       socket.off("join_channel_success");
       socket.off("join_channel_error");
-      socket.off("call_received");
+      socket.off("incoming_call");
+      socket.off("call_cancelled");
+      socket.off("call_accepted");
+      socket.off("call_declined");
+      socket.off("call_failed");
       socket.off("invitation_received");
       socket.off("host_assist_invitation_received");
       socket.off("channel_deleted");
@@ -412,13 +436,53 @@ function App() {
   };
 
   const startVideoCall = () => {
-    setIsVoiceCall(false);
-    setIsVideoCallActive(true);
+    const targetId = selectedUserId
+      ? [username, selectedUser?.name].sort().join("_")
+      : selectedChannelId;
+
+    socket.emit("initiate_call", {
+      to: selectedUserId ? selectedUser?.name : null,
+      channelId: targetId,
+      from: username,
+      isVideo: true
+    });
   };
 
   const startVoiceCall = () => {
-    setIsVoiceCall(true);
+    const targetId = selectedUserId
+      ? [username, selectedUser?.name].sort().join("_")
+      : selectedChannelId;
+
+    socket.emit("initiate_call", {
+      to: selectedUserId ? selectedUser?.name : null,
+      channelId: targetId,
+      from: username,
+      isVideo: false
+    });
+  };
+
+  const handleAcceptCall = () => {
+    if (!incomingCall) return;
+
+    socket.emit("accept_call", {
+      from: incomingCall.from,
+      channelId: incomingCall.channelId
+    });
+
+    setIsVoiceCall(!incomingCall.isVideo);
     setIsVideoCallActive(true);
+    setIncomingCall(null);
+  };
+
+  const handleDeclineCall = () => {
+    if (!incomingCall) return;
+
+    socket.emit("decline_call", {
+      from: incomingCall.from,
+      channelId: incomingCall.channelId
+    });
+
+    setIncomingCall(null);
   };
 
   if (!isLoggedIn) {
@@ -514,6 +578,15 @@ function App() {
             username={username}
             onClose={() => setIsVideoCallActive(false)}
             isVoiceOnly={isVoiceCall}
+          />
+        )}
+
+        {incomingCall && (
+          <IncomingCallModal
+            callerName={incomingCall.from}
+            isVideoCall={incomingCall.isVideo}
+            onAccept={handleAcceptCall}
+            onDecline={handleDeclineCall}
           />
         )}
       </div>

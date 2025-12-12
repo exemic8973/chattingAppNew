@@ -7,6 +7,7 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
 
     const myVideo = useRef();
     const peersRef = useRef([]); // Array of { peerId, peer }
+    const streamRef = useRef(null); // Store stream in ref for cleanup
 
     useEffect(() => {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -16,6 +17,7 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
 
         navigator.mediaDevices.getUserMedia({ video: !isVoiceOnly, audio: true })
             .then((currentStream) => {
+                streamRef.current = currentStream; // Store in ref for reliable cleanup
                 setStream(currentStream);
                 if (myVideo.current && !isVoiceOnly) {
                     myVideo.current.srcObject = currentStream;
@@ -76,12 +78,22 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
             socket.off("call_answered");
             socket.off("ice_candidate_received");
 
-            // Stop all tracks
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
+            // Stop all tracks using ref (not stale closure)
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => {
+                    track.stop();
+                    console.log('Stopped track:', track.kind);
+                });
+                streamRef.current = null;
             }
+
             // Close all peers
-            peersRef.current.forEach(p => p.peer.close());
+            peersRef.current.forEach(p => {
+                if (p.peer) {
+                    p.peer.close();
+                }
+            });
+            peersRef.current = [];
         };
     }, [channelId, isVoiceOnly]);
 
@@ -221,25 +233,38 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
 };
 
 const Video = ({ peer, isVoiceOnly }) => {
-    const ref = useRef();
+    const videoRef = useRef();
+    const audioRef = useRef();
 
     useEffect(() => {
         if (peer.stream) {
-            ref.current.srcObject = peer.stream;
+            if (isVoiceOnly) {
+                // Voice only: use audio element
+                if (audioRef.current) {
+                    audioRef.current.srcObject = peer.stream;
+                }
+            } else {
+                // Video call: use video element
+                if (videoRef.current) {
+                    videoRef.current.srcObject = peer.stream;
+                }
+            }
         }
-    }, [peer.stream]);
+    }, [peer.stream, isVoiceOnly]);
 
     return (
         <div className="video-box" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             {isVoiceOnly ? (
-                <div style={{ width: '150px', height: '150px', borderRadius: '50%', backgroundColor: '#555', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: 'white', border: '2px solid #fff' }}>
-                    👤
-                </div>
+                <>
+                    <div style={{ width: '150px', height: '150px', borderRadius: '50%', backgroundColor: '#555', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: 'white', border: '2px solid #fff' }}>
+                        👤
+                    </div>
+                    {/* Separate audio element for voice-only mode */}
+                    <audio ref={audioRef} autoPlay playsInline style={{ display: 'none' }} />
+                </>
             ) : (
-                <video playsInline ref={ref} autoPlay style={{ width: '100%', maxWidth: '400px', borderRadius: '10px', border: '2px solid #fff' }} />
+                <video playsInline ref={videoRef} autoPlay style={{ width: '100%', maxWidth: '400px', borderRadius: '10px', border: '2px solid #fff' }} />
             )}
-            {/* Always render video for audio playback, hide if voice only */}
-            {isVoiceOnly && <video playsInline ref={ref} autoPlay style={{ width: '0px', height: '0px' }} />}
 
             <p style={{ textAlign: 'center', color: 'white', marginTop: '10px' }}>User {peer.peerId.substr(0, 5)}</p>
         </div>
