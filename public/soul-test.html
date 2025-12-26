@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soul语音房间测试</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .test-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+        }
+        .test-section {
+            margin: 2rem 0;
+            padding: 1.5rem;
+            border-radius: 15px;
+            background: white;
+            color: #333;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #FF6B6B;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 8px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        button {
+            background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 5px;
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        .log {
+            background: #000;
+            color: #0f0;
+            padding: 10px;
+            border-radius: 4px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+        .feature-list li {
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .feature-list li:before {
+            content: "✨ ";
+            color: #FF6B6B;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🎭 Soul语音房间测试</h1>
+        
+        <div class="test-section">
+            <h2>功能特性</h2>
+            <ul class="feature-list">
+                <li>🎤 实时语音通话</li>
+                <li>🎭 6种房间分类（社交、音乐、游戏、学习、情感、随机）</li>
+                <li>👥 圆形座位布局</li>
+                <li>🎯 智能推荐系统</li>
+                <li>📊 房间管理功能</li>
+                <li>🎁 礼物和表情互动</li>
+                <li>🔐 私人房间支持</li>
+                <li>📱 完美移动端适配</li>
+            </ul>
+        </div>
+
+        <div class="test-section">
+            <h2>连接测试</h2>
+            <button id="testConnection">测试Socket连接</button>
+            <button id="testSoulRooms">获取Soul房间列表</button>
+            <button id="testCreateRoom">创建测试房间</button>
+            <div id="connectionStatus" class="status info">未连接</div>
+        </div>
+
+        <div class="test-section">
+            <h2>功能测试</h2>
+            <button id="testVoiceDetection">测试语音检测</button>
+            <button id="testRoomJoin">模拟加入房间</button>
+            <button id="testGiftSystem">测试礼物系统</button>
+            <div id="featureStatus" class="status info">未测试</div>
+        </div>
+
+        <div class="test-section">
+            <h2>测试日志</h2>
+            <div id="log" class="log"></div>
+            <button id="clearLog">清空日志</button>
+        </div>
+
+        <div class="test-section">
+            <h2>使用说明</h2>
+            <ol>
+                <li>确保服务器运行在 <code>https://localhost:3001</code></li>
+                <li>点击"测试Socket连接"验证连接</li>
+                <li>点击"获取Soul房间列表"查看可用房间</li>
+                <li>在主应用中点击 🎭 按钮进入Soul语音房间</li>
+                <li>创建或加入房间体验完整功能</li>
+            </ol>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let socket = null;
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+
+        // Test Socket Connection
+        document.getElementById('testConnection').addEventListener('click', () => {
+            updateStatus('connectionStatus', '连接中...', 'info');
+            
+            try {
+                socket = io('https://localhost:3001', {
+                    secure: false,
+                    rejectUnauthorized: false
+                });
+                
+                socket.on('connect', () => {
+                    log('✅ Socket连接成功');
+                    updateStatus('connectionStatus', '✅ 已连接', 'success');
+                });
+                
+                socket.on('disconnect', () => {
+                    log('❌ Socket连接断开');
+                    updateStatus('connectionStatus', '❌ 已断开', 'error');
+                });
+                
+                socket.on('connect_error', (error) => {
+                    log(`❌ 连接错误: ${error.message}`);
+                    updateStatus('connectionStatus', `❌ 错误: ${error.message}`, 'error');
+                });
+                
+            } catch (error) {
+                log(`❌ 初始化错误: ${error.message}`);
+                updateStatus('connectionStatus', `❌ 错误: ${error.message}`, 'error');
+            }
+        });
+
+        // Test Soul Rooms
+        document.getElementById('testSoulRooms').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('❌ Socket未连接');
+                return;
+            }
+            
+            log('请求Soul房间列表...');
+            socket.emit('get_soul_rooms');
+            
+            socket.on('soul_rooms_updated', (rooms) => {
+                log(`✅ 获取到 ${rooms.length} 个Soul房间`);
+                rooms.forEach((room, index) => {
+                    log(`  房间${index + 1}: ${room.name} (${room.category}) - ${room.participantCount}/${room.maxParticipants}人`);
+                });
+            });
+        });
+
+        // Test Create Room
+        document.getElementById('testCreateRoom').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('❌ Socket未连接');
+                return;
+            }
+            
+            const testRoom = {
+                name: '测试房间-' + Date.now(),
+                description: '这是一个测试房间',
+                category: 'social',
+                maxParticipants: 6,
+                isPrivate: false
+            };
+            
+            log(`创建测试房间: ${testRoom.name}`);
+            socket.emit('create_soul_room', testRoom);
+            
+            socket.on('soul_room_created', (room) => {
+                log(`✅ 房间创建成功: ${room.name} (${room.id})`);
+            });
+        });
+
+        // Test Voice Detection
+        document.getElementById('testVoiceDetection').addEventListener('click', async () => {
+            try {
+                log('请求麦克风权限...');
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                log('✅ 麦克风权限获取成功');
+                
+                // Create audio context for voice detection
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                
+                log('✅ 语音检测系统初始化成功');
+                updateStatus('featureStatus', '✅ 语音检测正常', 'success');
+                
+                // Stop test stream
+                stream.getTracks().forEach(track => track.stop());
+                
+            } catch (error) {
+                log(`❌ 语音检测测试失败: ${error.message}`);
+                updateStatus('featureStatus', `❌ 语音检测失败: ${error.message}`, 'error');
+            }
+        });
+
+        // Test Room Join
+        document.getElementById('testRoomJoin').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('❌ Socket未连接');
+                return;
+            }
+            
+            const testUsername = '测试用户-' + Math.random().toString(36).substr(2, 9);
+            log(`模拟加入房间，用户: ${testUsername}`);
+            
+            // Mock room join
+            socket.emit('join_soul_room', {
+                roomId: 'soul-1',
+                username: testUsername
+            });
+            
+            socket.on('soul_room_joined', (data) => {
+                log(`✅ 成功加入房间: ${data.room.name}`);
+                log(`  当前参与者: ${data.participants.length}人`);
+                updateStatus('featureStatus', '✅ 房间加入正常', 'success');
+            });
+        });
+
+        // Test Gift System
+        document.getElementById('testGiftSystem').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('❌ Socket未连接');
+                return;
+            }
+            
+            log('测试礼物系统...');
+            socket.emit('soul_send_gift', {
+                roomId: 'soul-1',
+                giftType: 'rose',
+                targetUsername: '测试用户'
+            });
+            
+            socket.on('soul_gift_received', (data) => {
+                log(`✅ 礼物发送成功: ${data.from} -> ${data.to} (${data.giftType})`);
+                updateStatus('featureStatus', '✅ 礼物系统正常', 'success');
+            });
+        });
+
+        // Clear Log
+        document.getElementById('clearLog').addEventListener('click', () => {
+            document.getElementById('log').innerHTML = '';
+        });
+
+        // Initial log
+        log('Soul语音房间测试页面已加载');
+        log('请确保服务器正在运行，然后开始测试');
+    </script>
+</body>
+</html>

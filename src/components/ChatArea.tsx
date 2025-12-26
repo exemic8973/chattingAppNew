@@ -1,19 +1,51 @@
-import React, { useState, useRef, useEffect, useImperativeHandle } from 'react';
+import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef, ForwardedRef } from 'react';
 import Message from './Message';
 import { useI18n } from '../i18n/I18nContext';
+import type { Message as MessageType, Reaction } from '../types';
 
-const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], onTyping, onStopTyping, onLoadMore, onAddReaction, onRemoveReaction, onDelete, onEdit, currentUser }, ref) => {
+// Type definitions
+interface ChatAreaProps {
+    messages: MessageType[];
+    onSendMessage: (message: string, msg?: MessageType, replyToId?: number) => void;
+    typingUsers?: string[];
+    onTyping?: () => void;
+    onStopTyping?: () => void;
+    onLoadMore?: () => void;
+    onAddReaction?: (messageId: number, emoji: string) => void;
+    onRemoveReaction?: (messageId: number, emoji: string) => void;
+    onDelete?: (messageId: number) => void;
+    onEdit?: (messageId: number, newText: string) => void;
+    currentUser: string;
+}
+
+interface ChatAreaHandle {
+    scrollToMessage: (messageId: number) => void;
+}
+
+const ChatArea = forwardRef<ChatAreaHandle, ChatAreaProps>(({
+    messages,
+    onSendMessage,
+    typingUsers = [],
+    onTyping,
+    onStopTyping,
+    onLoadMore,
+    onAddReaction,
+    onRemoveReaction,
+    onDelete,
+    onEdit,
+    currentUser
+}, ref: ForwardedRef<ChatAreaHandle>) => {
     const { t } = useI18n();
-    const [inputValue, setInputValue] = useState('');
-    const messagesEndRef = useRef(null);
-    const messagesListRef = useRef(null);
-    const typingTimeoutRef = useRef(null);
-    const fileInputRef = useRef(null);
-    const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [isUploading, setIsUploading] = useState(false);
-    const previousHeightRef = useRef(0);
-    const messageRefs = useRef({});
-    const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+    const [inputValue, setInputValue] = useState<string>('');
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const messagesListRef = useRef<HTMLDivElement>(null);
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+    const [isUploading, setIsUploading] = useState<boolean>(false);
+    const previousHeightRef = useRef<number>(0);
+    const messageRefs = useRef<Record<number, HTMLElement>>({});
+    const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -21,7 +53,7 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
 
     // Expose scrollToMessage method to parent
     useImperativeHandle(ref, () => ({
-        scrollToMessage: (messageId) => {
+        scrollToMessage: (messageId: number) => {
             const messageElement = messageRefs.current[messageId];
             if (messageElement) {
                 messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -35,7 +67,7 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
     // Auto-scroll to bottom only on NEW messages at the bottom, or initial load?
     // If we loaded OLDER messages, we should NOT scroll to bottom.
     // We can check if the last message ID changed.
-    const lastMessageIdRef = useRef(null);
+    const lastMessageIdRef = useRef<number | null>(null);
 
     useEffect(() => {
         const lastMsg = messages[messages.length - 1];
@@ -72,17 +104,19 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
             onSendMessage(inputValue);
             setInputValue('');
             if (onStopTyping) onStopTyping();
-            clearTimeout(typingTimeoutRef.current);
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
+            }
         }
     };
 
-    const handleKeyDown = (e) => {
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter') {
             handleSend();
         }
     };
 
-    const handleChange = (e) => {
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setInputValue(e.target.value);
 
         if (onTyping) {
@@ -100,8 +134,8 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
         }
     };
 
-    const handleFileSelect = async (e) => {
-        const file = e.target.files[0];
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
         if (!file) return;
 
         setIsUploading(true);
@@ -115,9 +149,9 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
             });
 
             if (response.ok) {
-                const data = await response.json();
+                const data = await response.json() as { url: string };
                 // Format message based on file type
-                let fileMessage;
+                let fileMessage: string;
                 if (file.type.startsWith('image/')) {
                     // Use markdown image syntax for images
                     fileMessage = `![${file.name}](${data.url})`;
@@ -148,10 +182,11 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
                 onScroll={handleScroll}
             >
                 {isLoadingMore && <div style={{ textAlign: 'center', color: '#888', padding: '10px' }}>{t('chat.loadingHistory')}</div>}
-                {messages.map(msg => (
+
+                {messages.map((msg: MessageType) => (
                     <Message
                         key={msg.id}
-                        ref={(el) => messageRefs.current[msg.id] = el}
+                        ref={(el: HTMLElement | null) => { if (el) messageRefs.current[msg.id] = el; }}
                         messageId={msg.id}
                         text={msg.text}
                         isOwn={msg.isOwn}
@@ -218,4 +253,3 @@ const ChatArea = React.forwardRef(({ messages, onSendMessage, typingUsers = [], 
 ChatArea.displayName = 'ChatArea';
 
 export default ChatArea;
-

@@ -1,14 +1,122 @@
 import bcrypt from 'bcryptjs';
 import { getDb } from './db.js';
+import createDOMPurify from 'dompurify';
+import { JSDOM } from 'jsdom';
+import {
+    logSocketEvent,
+    logSecurityEvent,
+    logAuthEvent,
+    logMessageEvent,
+    logDatabaseOperation,
+    logChannelEvent,
+    logError
+} from './logging.js';
+
+// Create DOMPurify instance for server-side XSS sanitization
+const window = new JSDOM('').window;
+const DOMPurify = createDOMPurify(window);
 
 // Active sessions (keep in memory)
 const users = {}; // socket.id -> { username, room }
 
+// Rate limiting for Socket.IO connections
+const connectionAttempts = new Map(); // IP -> { count, lastAttempt }
+
+// Rate limiting for messages
+const messageAttempts = new Map(); // username -> { count, lastMessage }
+
+const checkMessageRateLimit = (username) => {
+  const now = Date.now();
+  const windowMs = 60 * 1000; // 1 minute
+  const maxMessages = 30; // Max 30 messages per minute
+
+  if (!messageAttempts.has(username)) {
+    messageAttempts.set(username, { count: 1, lastMessage: now });
+    return true;
+  }
+
+  const attempts = messageAttempts.get(username);
+  
+  // Reset if window has passed
+  if (now - attempts.lastMessage > windowMs) {
+    messageAttempts.set(username, { count: 1, lastMessage: now });
+    return true;
+  }
+
+  // Check if exceeded limit
+  if (attempts.count >= maxMessages) {
+    return false;
+  }
+
+  // Increment count
+  attempts.count++;
+  attempts.lastMessage = now;
+  return true;
+};
+
+const checkConnectionRateLimit = (socket) => {
+  const clientIP = socket.handshake.address;
+  const now = Date.now();
+  const windowMs = 60 * 1000; // 1 minute (reduced from 15 minutes)
+  const maxAttempts = 100; // Max 100 connection attempts per minute (increased from 10)
+
+  if (!connectionAttempts.has(clientIP)) {
+    connectionAttempts.set(clientIP, { count: 1, lastAttempt: now });
+    return true;
+  }
+
+  const attempts = connectionAttempts.get(clientIP);
+  
+  // Reset if window has passed
+  if (now - attempts.lastAttempt > windowMs) {
+    connectionAttempts.set(clientIP, { count: 1, lastAttempt: now });
+    return true;
+  }
+
+  // Check if exceeded limit
+  if (attempts.count >= maxAttempts) {
+    return false;
+  }
+
+  // Increment count
+  attempts.count++;
+  attempts.lastAttempt = now;
+  return true;
+};
+
 export function setupSocket(io) {
     const db = getDb();
 
+    // Helper function to check if user is admin based on role in database
+    const isAdmin = async (username) => {
+        try {
+            const user = await db.get('SELECT role FROM users WHERE username = ?', username);
+            return user && (user.role === 'admin' || user.role === 'system' || username === 'system');
+        } catch (e) {
+            console.error('Error checking admin role:', e);
+            return false;
+        }
+    };
+
     io.on('connection', (socket) => {
-        console.log(`User Connected: ${socket.id}`);
+        // Check connection rate limiting
+        if (!checkConnectionRateLimit(socket)) {
+            logSecurityEvent('CONNECTION_RATE_LIMITED', {
+                ip: socket.handshake.address,
+                userAgent: socket.handshake.headers['user-agent']
+            });
+            socket.emit('connection_error', {
+                error: 'Too many connection attempts. Please try again later.',
+                retryAfter: '15 minutes'
+            });
+            socket.disconnect(true);
+            return;
+        }
+
+        logSocketEvent('USER_CONNECTED', socket.id, {
+            ip: socket.handshake.address,
+            userAgent: socket.handshake.headers['user-agent']
+        });
 
         // Helper to broadcast user list
         const broadcastUserList = async () => {
@@ -51,9 +159,12 @@ export function setupSocket(io) {
                     .filter(user => user.room === channelId)
                     .map(user => user.username);
 
+                // Remove duplicates
+                const uniqueUsernames = [...new Set(channelMembers)];
+
                 // Get user details from database
                 const membersWithDetails = await Promise.all(
-                    channelMembers.map(async (username) => {
+                    uniqueUsernames.map(async (username) => {
                         const userDetails = await db.get(
                             'SELECT username, avatar_url FROM users WHERE username = ?',
                             username
@@ -92,6 +203,246 @@ export function setupSocket(io) {
             }
         };
 
+        // Check user role
+        socket.on('check_user_role', async (data) => {
+            const { username } = data;
+            try {
+                const user = await db.get('SELECT role FROM users WHERE username = ?', username);
+                if (user) {
+                    socket.emit('user_role', {
+                        username,
+                        role: user.role || 'user'
+                    });
+                }
+            } catch (e) {
+                console.error('Error checking user role:', e);
+            }
+        });
+
+        // Get thread messages
+        socket.on('get_thread_messages', async (data) => {
+            const { channelId, threadId } = data;
+            try {
+                const messages = await db.all(
+                    'SELECT * FROM messages WHERE channel_id = ? AND thread_id = ? ORDER BY timestamp ASC',
+                    channelId, threadId
+                );
+                socket.emit('thread_messages', { messages });
+            } catch (e) {
+                console.error('Error getting thread messages:', e);
+                socket.emit('thread_messages', { messages: [] });
+            }
+        });
+
+        // ===== Soul Voice Room Events =====
+
+        // Get all soul rooms
+        socket.on('get_soul_rooms', async () => {
+            try {
+                const rooms = await db.all('SELECT * FROM soul_voice_rooms WHERE is_active = 1 ORDER BY created_at DESC');
+                socket.emit('soul_rooms_updated', rooms);
+            } catch (e) {
+                console.error('Error getting soul rooms:', e);
+                socket.emit('soul_rooms_updated', []);
+            }
+        });
+
+        // Join a soul room
+        socket.on('join_soul_room', async (data) => {
+            const { roomId, username } = data;
+            const socketId = socket.id;
+
+            try {
+                const room = await db.get('SELECT * FROM soul_voice_rooms WHERE id = ?', roomId);
+                if (!room) {
+                    socket.emit('error', { message: 'Room not found' });
+                    return;
+                }
+
+                if (room.is_private && room.password !== data.password) {
+                    socket.emit('error', { message: 'Invalid password' });
+                    return;
+                }
+
+                // Check if room is full
+                const participants = await db.all('SELECT * FROM soul_room_participants WHERE room_id = ?', roomId);
+                if (participants.length >= room.max_participants) {
+                    socket.emit('error', { message: 'Room is full' });
+                    return;
+                }
+
+                // Join socket room
+                socket.join(`soul_${roomId}`);
+
+                // Add participant to database
+                await db.run(
+                    'INSERT INTO soul_room_participants (room_id, socket_id, username, joined_at, is_muted) VALUES (?, ?, ?, ?, 1)',
+                    roomId, socketId, username, Date.now()
+                );
+
+                // Get updated participant list
+                const updatedParticipants = await db.all('SELECT * FROM soul_room_participants WHERE room_id = ?', roomId);
+
+                socket.emit('soul_room_joined', { room, participants: updatedParticipants });
+                io.to(`soul_${roomId}`).emit('soul_participant_joined', {
+                    id: socketId,
+                    username,
+                    joinedAt: Date.now(),
+                    isMuted: true,
+                    isSpeaking: false
+                });
+            } catch (e) {
+                console.error('Error joining soul room:', e);
+                socket.emit('error', { message: 'Failed to join room' });
+            }
+        });
+
+        // Leave a soul room
+        socket.on('leave_soul_room', async (data) => {
+            const { roomId, username } = data;
+            const socketId = socket.id;
+
+            try {
+                // Check if the user is the host
+                const room = await db.get('SELECT * FROM soul_voice_rooms WHERE id = ?', roomId);
+                
+                if (room && room.host === username) {
+                    // Host is leaving - close the room
+                    console.log(`Host ${username} is leaving soul room ${roomId} - closing room`);
+                    
+                    // Mark room as inactive
+                    await db.run('UPDATE soul_voice_rooms SET is_active = 0 WHERE id = ?', roomId);
+                    
+                    // Remove all participants
+                    await db.run('DELETE FROM soul_room_participants WHERE room_id = ?', roomId);
+                    
+                    // Notify all participants that room is closed
+                    io.to(`soul_${roomId}`).emit('soul_room_closed', { message: '主持人已关闭房间' });
+                    
+                    // Make everyone leave the socket room
+                    io.in(`soul_${roomId}`).socketsLeave(`soul_${roomId}`);
+                    
+                    // Broadcast updated room list
+                    const rooms = await db.all('SELECT * FROM soul_voice_rooms WHERE is_active = 1 ORDER BY created_at DESC');
+                    io.emit('soul_rooms_updated', rooms);
+                    
+                    socket.emit('soul_room_left');
+                } else {
+                    // Regular participant leaving
+                    await db.run('DELETE FROM soul_room_participants WHERE room_id = ? AND socket_id = ?', roomId, socketId);
+                    
+                    socket.leave(`soul_${roomId}`);
+                    socket.emit('soul_room_left');
+                    io.to(`soul_${roomId}`).emit('soul_participant_left', socketId);
+                    
+                    // Check if room is now empty and close it
+                    const remainingParticipants = await db.all('SELECT * FROM soul_room_participants WHERE room_id = ?', roomId);
+                    if (remainingParticipants.length === 0) {
+                        await db.run('UPDATE soul_voice_rooms SET is_active = 0 WHERE id = ?', roomId);
+                        const rooms = await db.all('SELECT * FROM soul_voice_rooms WHERE is_active = 1 ORDER BY created_at DESC');
+                        io.emit('soul_rooms_updated', rooms);
+                    }
+                }
+            } catch (e) {
+                console.error('Error leaving soul room:', e);
+            }
+        });
+
+        // Update speaking status
+        socket.on('soul_speaking_status', (data) => {
+            const { roomId, isSpeaking } = data;
+            const socketId = socket.id;
+
+            try {
+                db.run(
+                    'UPDATE soul_room_participants SET is_speaking = ? WHERE room_id = ? AND socket_id = ?',
+                    isSpeaking ? 1 : 0, roomId, socketId
+                );
+
+                io.to(`soul_${roomId}`).emit('soul_participant_speaking', {
+                    participantId: socketId,
+                    isSpeaking
+                });
+            } catch (e) {
+                console.error('Error updating speaking status:', e);
+            }
+        });
+
+        // Update mute status
+        socket.on('soul_mute_status', async (data) => {
+            const { roomId, isMuted } = data;
+            const socketId = socket.id;
+
+            try {
+                await db.run(
+                    'UPDATE soul_room_participants SET is_muted = ? WHERE room_id = ? AND socket_id = ?',
+                    isMuted ? 1 : 0, roomId, socketId
+                );
+
+                // Broadcast to all participants
+                const participants = await db.all('SELECT * FROM soul_room_participants WHERE room_id = ?', roomId);
+                io.to(`soul_${roomId}`).emit('soul_participants_updated', participants);
+            } catch (e) {
+                console.error('Error updating mute status:', e);
+            }
+        });
+
+        // Invite user to soul room
+        socket.on('soul_invite_user', async (data) => {
+            const { roomId, fromUsername, targetUsername, roomName } = data;
+
+            try {
+                // Find target user's socket
+                const targetSocket = Object.values(users).find(u => u.username === targetUsername);
+                
+                if (targetSocket) {
+                    io.to(targetSocket.socketId).emit('soul_room_invitation', {
+                        roomId,
+                        roomName,
+                        fromUsername,
+                        message: `${fromUsername} 邀请您加入语音房间 "${roomName}"`
+                    });
+                    console.log(`Soul room invitation sent from ${fromUsername} to ${targetUsername}`);
+                } else {
+                    socket.emit('error', { message: '用户不在线' });
+                }
+            } catch (e) {
+                console.error('Error sending soul room invitation:', e);
+            }
+        });
+
+        // Create a new soul room
+        socket.on('create_soul_room', async (data) => {
+            const { name, description, category, maxParticipants, isPrivate, password, username } = data;
+
+            console.log('create_soul_room data:', { name, description, category, maxParticipants, isPrivate, password, username });
+
+            if (!username) {
+                console.error('Username is required for creating soul room');
+                socket.emit('error', { message: 'Username is required' });
+                return;
+            }
+
+            try {
+                const roomId = `soul_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+                await db.run(
+                    'INSERT INTO soul_voice_rooms (id, name, description, category, host, max_participants, is_private, password, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
+                    roomId, name, description, category, username, maxParticipants, isPrivate ? 1 : 0, password, Date.now()
+                );
+
+                // Broadcast updated room list to all users
+                const rooms = await db.all('SELECT * FROM soul_voice_rooms WHERE is_active = 1 ORDER BY created_at DESC');
+                io.emit('soul_rooms_updated', rooms);
+
+                socket.emit('soul_room_created', { roomId });
+                console.log(`Soul room created successfully: ${name} (${roomId})`);
+            } catch (e) {
+                console.error('Error creating soul room:', e);
+                socket.emit('error', { message: 'Failed to create room' });
+            }
+        });
+
         // Auth Events
         socket.on('signup', async (data) => {
             const { username, password } = data;
@@ -100,18 +451,31 @@ export function setupSocket(io) {
             try {
                 const existing = await db.get('SELECT * FROM users WHERE lower(username) = ?', normalizedUser);
                 if (existing) {
+                    logAuthEvent('SIGNUP_FAILED_USERNAME_EXISTS', username, {
+                        socketId: socket.id,
+                        ip: socket.handshake.address
+                    });
                     socket.emit('signup_error', 'Username already exists');
                 } else {
-                    const hashedPassword = await bcrypt.hash(password, 10);
+                    const hashedPassword = await bcrypt.hash(password, 12); // Increased from 10 to 12 for stronger security
                     await db.run('INSERT INTO users (username, password) VALUES (?, ?)', username, hashedPassword);
-                    console.log(`New User Registered: ${username}`);
+                    
+                    logAuthEvent('USER_REGISTERED', username, {
+                        socketId: socket.id,
+                        ip: socket.handshake.address
+                    });
+                    
                     socket.emit('signup_success', 'Account created successfully! You can now login.');
 
                     // Refresh user list for everyone (new offline user)
                     broadcastUserList();
                 }
             } catch (e) {
-                console.error("Signup error:", e);
+                logError(e, { 
+                    context: 'Signup error', 
+                    username, 
+                    socketId: socket.id 
+                });
                 socket.emit('signup_error', 'Server error');
             }
         });
@@ -125,15 +489,33 @@ export function setupSocket(io) {
                 if (user) {
                     const match = await bcrypt.compare(password, user.password);
                     if (match) {
+                        logAuthEvent('USER_LOGIN_SUCCESS', username, {
+                            socketId: socket.id,
+                            ip: socket.handshake.address
+                        });
                         socket.emit('login_success', user.username);
                     } else {
+                        logSecurityEvent('LOGIN_FAILED_INVALID_PASSWORD', {
+                            username,
+                            socketId: socket.id,
+                            ip: socket.handshake.address
+                        });
                         socket.emit('login_error', 'Invalid username or password');
                     }
                 } else {
+                    logSecurityEvent('LOGIN_FAILED_USER_NOT_FOUND', {
+                        username,
+                        socketId: socket.id,
+                        ip: socket.handshake.address
+                    });
                     socket.emit('login_error', 'Invalid username or password');
                 }
             } catch (e) {
-                console.error("Login error:", e);
+                logError(e, { 
+                    context: 'Login error', 
+                    username, 
+                    socketId: socket.id 
+                });
                 socket.emit('login_error', 'Server error');
             }
         });
@@ -200,16 +582,396 @@ export function setupSocket(io) {
         socket.on('send_message', async (data) => {
             const { channelId, message } = data;
 
+            // Check message rate limiting
+            if (!checkMessageRateLimit(message.sender)) {
+                logSecurityEvent('MESSAGE_RATE_LIMITED', {
+                    username: message.sender,
+                    channelId,
+                    socketId: socket.id
+                });
+                socket.emit('message_error', {
+                    error: 'You are sending messages too quickly. Please wait a moment.',
+                    retryAfter: '1 minute'
+                });
+                return;
+            }
+
             try {
+                // Sanitize message text to prevent XSS attacks
+                const sanitizedText = DOMPurify.sanitize(message.text);
+
+                // Create sanitized message object
+                const sanitizedMessage = {
+                    ...message,
+                    text: sanitizedText
+                };
+
                 await db.run(
                     'INSERT INTO messages (channel_id, sender, text, time, timestamp) VALUES (?, ?, ?, ?, ?)',
-                    channelId, message.sender, message.text, message.time, Date.now()
+                    channelId, sanitizedMessage.sender, sanitizedMessage.text, sanitizedMessage.time, Date.now()
                 );
 
+                logMessageEvent('MESSAGE_SENT', channelId, sanitizedMessage.sender, {
+                    messageId: sanitizedMessage.id,
+                    messageLength: sanitizedMessage.text.length
+                });
+
                 // Broadcast to everyone in the room (including sender)
-                io.to(channelId).emit('receive_message', message);
+                io.to(channelId).emit('receive_message', sanitizedMessage);
             } catch (e) {
-                console.error("Send message error:", e);
+                logError(e, {
+                    context: 'Send message error',
+                    username: message.sender,
+                    channelId,
+                    socketId: socket.id
+                });
+                socket.emit('message_error', {
+                    error: 'Failed to send message. Please try again.'
+                });
+            }
+        });
+
+        // Reply to message
+        socket.on('reply_to_message', async (data) => {
+            const { channelId, message, replyToId } = data;
+
+            // Check message rate limiting
+            if (!checkMessageRateLimit(message.sender)) {
+                socket.emit('message_error', {
+                    error: 'You are sending messages too quickly. Please wait a moment.',
+                    retryAfter: '1 minute'
+                });
+                return;
+            }
+
+            try {
+                // Sanitize message text to prevent XSS attacks
+                const sanitizedText = DOMPurify.sanitize(message.text);
+
+                // Get the original message to determine thread_id
+                const originalMessage = await db.get('SELECT thread_id FROM messages WHERE id = ?', replyToId);
+
+                const threadId = originalMessage?.thread_id || replyToId;
+
+                await db.run(
+                    'INSERT INTO messages (channel_id, sender, text, time, timestamp, reply_to, thread_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    channelId, message.sender, sanitizedText, message.time, Date.now(), replyToId, threadId
+                );
+
+                // Add reply info to message with sanitized text
+                const replyMessage = { ...message, text: sanitizedText, reply_to: replyToId, thread_id: threadId };
+
+                // Broadcast to everyone in the room
+                io.to(channelId).emit('receive_message', replyMessage);
+
+                // Notify about the reply
+                io.to(channelId).emit('message_replied', {
+                    originalMessageId: replyToId,
+                    reply: replyMessage
+                });
+
+                // Broadcast new thread message for real-time thread view updates
+                io.to(channelId).emit('new_thread_message', replyMessage);
+
+                console.log(`User ${message.sender} replied to message ${replyToId} in channel ${channelId}`);
+            } catch (e) {
+                console.error("Reply to message error:", e);
+                socket.emit('message_error', {
+                    error: 'Failed to send reply. Please try again.'
+                });
+            }
+        });
+
+        // Get thread messages
+        socket.on('get_thread_messages', async (data) => {
+            const { channelId, threadId } = data;
+            
+            try {
+                const threadMessages = await db.all(
+                    `SELECT * FROM messages 
+                     WHERE channel_id = ? AND thread_id = ? 
+                     ORDER BY timestamp ASC`,
+                    channelId, threadId
+                );
+                
+                socket.emit('thread_messages', {
+                    threadId,
+                    messages: threadMessages
+                });
+            } catch (e) {
+                console.error("Get thread messages error:", e);
+                socket.emit('message_error', {
+                    error: 'Failed to load thread messages.'
+                });
+            }
+        });
+
+        // Admin functionality
+        socket.on('admin_get_stats', async () => {
+            const username = users[socket.id]?.username;
+            
+            // Check if user is admin based on role in database
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) {
+                logSecurityEvent('UNAUTHORIZED_ADMIN_ACCESS', {
+                    username,
+                    socketId: socket.id,
+                    ip: socket.handshake.address
+                });
+                return;
+            }
+
+            try {
+                const totalUsers = await db.get('SELECT COUNT(*) as count FROM users');
+                const totalMessages = await db.get('SELECT COUNT(*) as count FROM messages');
+                const totalChannels = await db.get('SELECT COUNT(*) as count FROM channels');
+                const bannedUsers = await db.get("SELECT COUNT(*) as count FROM channel_invites WHERE status = 'banned'");
+                
+                const stats = {
+                    totalUsers: totalUsers.count,
+                    onlineUsers: Object.keys(users).length,
+                    totalMessages: totalMessages.count,
+                    totalChannels: totalChannels.count,
+                    bannedUsers: bannedUsers.count,
+                    serverUptime: process.uptime() ? `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m` : '0h 0m'
+                };
+
+                socket.emit('admin_stats', stats);
+                logSocketEvent('ADMIN_STATS_ACCESSED', socket.id, { username });
+            } catch (e) {
+                logError(e, { context: 'Admin get stats error', username });
+            }
+        });
+
+        socket.on('admin_get_users', async () => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                const allUsers = await db.all('SELECT id, username FROM users');
+                const usersWithStatus = allUsers.map(user => ({
+                    ...user,
+                    status: Object.values(users).some(u => u.username === user.username) ? 'online' : 'offline',
+                    lastSeen: null // You might want to track last seen times
+                }));
+
+                socket.emit('admin_users', usersWithStatus);
+            } catch (e) {
+                logError(e, { context: 'Admin get users error', username });
+            }
+        });
+
+        socket.on('admin_get_channels', async () => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                const channels = await db.all(`
+                    SELECT c.*, COUNT(ci.username) as memberCount 
+                    FROM channels c 
+                    LEFT JOIN channel_invites ci ON c.id = ci.channel_id AND ci.status = 'accepted'
+                    GROUP BY c.id
+                `);
+
+                socket.emit('admin_channels', channels);
+            } catch (e) {
+                logError(e, { context: 'Admin get channels error', username });
+            }
+        });
+
+        socket.on('admin_get_logs', async () => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                // In a real implementation, you would read from log files
+                const logs = [
+                    { level: 'info', message: 'Server started successfully', timestamp: Date.now() - 3600000 },
+                    { level: 'warn', message: 'High memory usage detected', timestamp: Date.now() - 1800000 },
+                    { level: 'error', message: 'Database connection timeout', timestamp: Date.now() - 900000 }
+                ];
+
+                socket.emit('admin_logs', logs);
+            } catch (e) {
+                logError(e, { context: 'Admin get logs error', username });
+            }
+        });
+
+        socket.on('admin_get_banned_users', async () => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                const bannedUsers = await db.all(`
+                    SELECT DISTINCT ci.username, ci.timestamp as bannedAt, ci.invited_by as bannedBy
+                    FROM channel_invites ci 
+                    WHERE ci.status = 'banned'
+                `);
+
+                socket.emit('admin_banned_users', bannedUsers);
+            } catch (e) {
+                logError(e, { context: 'Admin get banned users error', username });
+            }
+        });
+
+        socket.on('admin_ban_user', async (data) => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) {
+                logSecurityEvent('UNAUTHORIZED_BAN_ATTEMPT', {
+                    username,
+                    targetUser: data.username,
+                    socketId: socket.id
+                });
+                return;
+            }
+
+            try {
+                // Add ban to all channels
+                const channels = await db.all('SELECT id FROM channels');
+                for (const channel of channels) {
+                    await db.run(`
+                        INSERT OR REPLACE INTO channel_invites 
+                        (channel_id, username, invited_by, timestamp, status, role) 
+                        VALUES (?, ?, ?, ?, 'banned', 'member')
+                    `, channel.id, data.username, username, Date.now());
+                }
+
+                // Kick user if online
+                const targetSocket = Object.entries(users).find(([, u]) => u.username === data.username);
+                if (targetSocket) {
+                    const [socketId] = targetSocket;
+                    io.to(socketId).emit('banned', { reason: data.reason });
+                    io.sockets.sockets.get(socketId)?.disconnect();
+                }
+
+                logSecurityEvent('USER_BANNED', {
+                    bannedUser: data.username,
+                    bannedBy: username,
+                    reason: data.reason,
+                    duration: data.duration
+                });
+
+                // Refresh banned users list
+                socket.emit('admin_get_banned_users');
+            } catch (e) {
+                logError(e, { context: 'Admin ban user error', username });
+            }
+        });
+
+        socket.on('admin_unban_user', async (data) => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                await db.run("DELETE FROM channel_invites WHERE username = ? AND status = 'banned'", data.username);
+
+                logSecurityEvent('USER_UNBANNED', {
+                    unbannedUser: data.username,
+                    unbannedBy: username
+                });
+
+                socket.emit('admin_get_banned_users');
+            } catch (e) {
+                logError(e, { context: 'Admin unban user error', username });
+            }
+        });
+
+        socket.on('admin_mute_user', async (data) => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                // You would implement actual muting logic here
+                // This could involve setting a mute flag in the database or in memory
+                logSecurityEvent('USER_MUTED', {
+                    mutedUser: data.username,
+                    mutedBy: username,
+                    duration: data.duration
+                });
+
+                // Notify the user they've been muted
+                const targetSocket = Object.entries(users).find(([, u]) => u.username === data.username);
+                if (targetSocket) {
+                    const [socketId] = targetSocket;
+                    io.to(socketId).emit('muted', { duration: data.duration, reason: 'Admin mute' });
+                }
+            } catch (e) {
+                logError(e, { context: 'Admin mute user error', username });
+            }
+        });
+
+        socket.on('admin_delete_channel', async (data) => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                await db.run('DELETE FROM channels WHERE id = ?', data.channelId);
+                await db.run('DELETE FROM messages WHERE channel_id = ?', data.channelId);
+                await db.run('DELETE FROM channel_invites WHERE channel_id = ?', data.channelId);
+
+                logChannelEvent('CHANNEL_DELETED_BY_ADMIN', data.channelId, username);
+
+                // Notify all users
+                io.emit('channel_deleted', { channelId: data.channelId });
+
+                socket.emit('admin_get_channels');
+            } catch (e) {
+                logError(e, { context: 'Admin delete channel error', username });
+            }
+        });
+
+        socket.on('admin_announcement', async (data) => {
+            const username = users[socket.id]?.username;
+            const userIsAdmin = await isAdmin(username);
+
+            if (!userIsAdmin) return;
+
+            try {
+                // Send announcement to all users
+                io.emit('announcement', {
+                    message: data.message,
+                    from: username,
+                    timestamp: Date.now()
+                });
+
+                logSocketEvent('ADMIN_ANNOUNCEMENT', socket.id, { username, message: data.message });
+            } catch (e) {
+                logError(e, { context: 'Admin announcement error', username });
+            }
+        });
+
+        socket.on('admin_restart_warning', async () => {
+            const username = users[socket.id]?.username;
+            const isAdmin = username === 'admin' || username === 'system';
+            
+            if (!isAdmin) return;
+
+            try {
+                io.emit('server_restart_warning', {
+                    message: 'Server will restart in 5 minutes. Please save your work.',
+                    timestamp: Date.now()
+                });
+
+                logSocketEvent('ADMIN_RESTART_WARNING', socket.id, { username });
+            } catch (e) {
+                logError(e, { context: 'Admin restart warning error', username });
             }
         });
 
@@ -246,8 +1008,12 @@ export function setupSocket(io) {
             try {
                 const msg = await db.get('SELECT sender FROM messages WHERE id = ?', messageId);
                 if (msg && msg.sender === username) {
-                    await db.run('UPDATE messages SET text = ? WHERE id = ?', newText + ' (edited)', messageId);
-                    io.to(channelId).emit('message_edited', { messageId, newText: newText + ' (edited)' });
+                    // Sanitize the new text to prevent XSS attacks
+                    const sanitizedText = DOMPurify.sanitize(newText);
+                    const editedText = sanitizedText + ' (edited)';
+
+                    await db.run('UPDATE messages SET text = ? WHERE id = ?', editedText, messageId);
+                    io.to(channelId).emit('message_edited', { messageId, newText: editedText });
                     console.log(`Message ${messageId} edited by ${username}`);
                 }
             } catch (e) {

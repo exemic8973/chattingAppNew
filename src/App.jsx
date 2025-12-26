@@ -1,27 +1,48 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import io from 'socket.io-client';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import ChatArea from './components/ChatArea';
 import Login from './components/Login';
-import VideoCall from './components/VideoCall';
-import ProfileModal from './components/ProfileModal';
-import SearchModal from './components/SearchModal';
-import ChannelMembers from './components/ChannelMembers';
-import InviteUserModal from './components/InviteUserModal';
-import IncomingCallModal from './components/IncomingCallModal';
-import VoiceChannel from './components/VoiceChannel';
+import notificationService from './services/NotificationService';
+
+// Lazy load modal components and large components
+const VideoCall = lazy(() => import('./components/VideoCall'));
+const ProfileModal = lazy(() => import('./components/ProfileModal'));
+const SearchModal = lazy(() => import('./components/SearchModal'));
+const ChannelMembers = lazy(() => import('./components/ChannelMembers'));
+const InviteUserModal = lazy(() => import('./components/InviteUserModal'));
+const IncomingCallModal = lazy(() => import('./components/IncomingCallModal'));
+const VoiceChannel = lazy(() => import('./components/VoiceChannel'));
+const SoulVoiceRoom = lazy(() => import('./components/SoulVoiceRoom'));
+const SoulRoomManager = lazy(() => import('./components/SoulRoomManager'));
+const SoulRecommendations = lazy(() => import('./components/SoulRecommendations'));
+const NotificationSettings = lazy(() => import('./components/NotificationSettings'));
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
 import { initialData, initialUsers } from './data';
 
+// Loading fallback component
+const LoadingFallback = () => (
+    <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '200px',
+        color: 'var(--text-secondary)'
+    }}>
+        Loading...
+    </div>
+);
+
 // Connect to backend
-// In production (Zeabur), use same origin. In development, use localhost:3001
+// In development (Zeabur), use same origin. In development, use localhost:3001
 const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const socketUrl = isDevelopment
   ? `https://${window.location.hostname}:3001`
   : window.location.origin;
 
 const socket = io(socketUrl, {
-  secure: !isDevelopment,
+  secure: true,
   rejectUnauthorized: false
 });
 
@@ -32,6 +53,9 @@ function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Restore session from localStorage on mount
   useEffect(() => {
@@ -44,6 +68,9 @@ function App() {
         setUserAvatar(savedAvatar);
       }
     }
+
+    // Initialize notification service
+    notificationService.initialize();
   }, []);
 
   // Keep teams structure for navigation, but messages will come from socket
@@ -59,6 +86,10 @@ function App() {
   const [isVoiceCall, setIsVoiceCall] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null); // { from, isVideo, channelId }
   const [showVoiceChannel, setShowVoiceChannel] = useState(false); // Toggle voice UI
+  const [showSoulVoiceRoom, setShowSoulVoiceRoom] = useState(false);
+  const [isSoulRoomActive, setIsSoulRoomActive] = useState(false);
+  const [showSoulManager, setShowSoulManager] = useState(false);
+  const [showSoulRecommendations, setShowSoulRecommendations] = useState(false);
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [channelMembers, setChannelMembers] = useState([]);
   const chatAreaRef = useRef(null);
@@ -91,6 +122,21 @@ function App() {
   useEffect(() => {
     socket.on("receive_message", (data) => {
       setCurrentMessages((list) => [...list, data]);
+      
+      // Show notification if message is not from current user and not in focus
+      if (data.sender !== username && document.hidden) {
+        const notificationSettings = JSON.parse(localStorage.getItem('notificationSettings') || '{}');
+        if (notificationSettings.enabled) {
+          const isMentioned = data.text.includes(`@${username}`);
+          const shouldNotify = isMentioned ? 
+            notificationSettings.mentionNotifications : 
+            notificationSettings.messageNotifications;
+
+          if (shouldNotify) {
+            notificationService.showMessageNotification(data.sender, data, data.channel_id, isMentioned);
+          }
+        }
+      }
     });
 
     socket.on("receive_history", (history) => {
@@ -196,6 +242,12 @@ function App() {
     // Incoming call notification system
     socket.on("incoming_call", ({ from, isVideo, channelId }) => {
       setIncomingCall({ from, isVideo, channelId });
+      
+      // Show call notification
+      const notificationSettings = JSON.parse(localStorage.getItem('notificationSettings') || '{}');
+      if (notificationSettings.enabled && notificationSettings.callNotifications && document.hidden) {
+        notificationService.showCallNotification(from, isVideo);
+      }
     });
 
     socket.on("call_cancelled", () => {
@@ -253,6 +305,53 @@ function App() {
 
     socket.on("connect", handleReconnect);
 
+    // Handle connection errors
+    socket.on("connect_error", (error) => {
+      console.error("Socket connection error:", error);
+      // You could show a user-friendly error message here
+      // For example: setConnectionError(error.message);
+    });
+
+    // Handle socket errors
+    socket.on("error", (error) => {
+      console.error("Socket error:", error);
+      // Show error to user
+    });
+
+    // Handle disconnection
+    socket.on("disconnect", (reason) => {
+      console.log("Socket disconnected:", reason);
+      // If the server initiated the disconnect, we should try to reconnect
+      if (reason === "io server disconnect") {
+        // Server disconnected us, reconnect manually
+        socket.connect();
+      }
+      // Otherwise, socket will try to reconnect automatically
+    });
+
+    // Handle reconnection attempts
+    socket.on("reconnect_attempt", (attemptNumber) => {
+      console.log("Attempting to reconnect, attempt:", attemptNumber);
+    });
+
+    // Handle successful reconnection
+    socket.on("reconnect", (attemptNumber) => {
+      console.log("Reconnected successfully after", attemptNumber, "attempts");
+    });
+
+    // Handle reconnection failure
+    socket.on("reconnect_failed", () => {
+      console.error("Failed to reconnect to server");
+      // Show error to user that reconnection failed
+    });
+
+    // Handle user role check response
+    socket.on("user_role", (data) => {
+      if (data.username === username) {
+        setIsAdmin(data.role === 'admin' || data.role === 'system');
+      }
+    });
+
     return () => {
       socket.off("receive_message");
       socket.off("receive_history");
@@ -269,6 +368,13 @@ function App() {
       socket.off("host_assist_invitation_received");
       socket.off("channel_deleted");
       socket.off("connect", handleReconnect);
+      socket.off("connect_error");
+      socket.off("error");
+      socket.off("disconnect");
+      socket.off("reconnect_attempt");
+      socket.off("reconnect");
+      socket.off("reconnect_failed");
+      socket.off("user_role");
     };
   }, [username, selectedChannelId]); // Add dependencies to ensure we have latest state on connect
 
@@ -277,6 +383,9 @@ function App() {
     setIsLoggedIn(true);
     // Save session to localStorage
     localStorage.setItem('chatAppUsername', user);
+
+    // Check if user is admin
+    socket.emit('check_user_role', { username: user });
   };
 
   const handleLogout = () => {
@@ -294,6 +403,9 @@ function App() {
 
   const handleChannelSelect = (teamId, channelId) => {
     console.log("Selecting Channel Request:", teamId, channelId);
+
+    // Exit soul room mode when selecting a channel
+    setIsSoulRoomActive(false);
 
     // Validate inputs
     if (!teamId || !channelId) {
@@ -335,6 +447,11 @@ function App() {
       return;
     }
     setShowInviteModal(true);
+  };
+
+  const handleSoulRoomClick = () => {
+    setIsSoulRoomActive(true);
+    setShowSoulVoiceRoom(true);
   };
 
   const handleInviteUserConfirm = (targetUser) => {
@@ -406,6 +523,9 @@ function App() {
   };
 
   const handleUserSelect = (userId) => {
+    // Exit soul room mode when selecting a user
+    setIsSoulRoomActive(false);
+
     setSelectedUserId(userId);
     setSelectedChannelId(null); // Deselect channel
 
@@ -431,6 +551,10 @@ function App() {
     let targetId = selectedChannelId;
     if (selectedUserId) {
       const otherUser = users.find(u => u.id === selectedUserId);
+      if (!otherUser) {
+        console.error('User not found:', selectedUserId);
+        return;
+      }
       targetId = [username, otherUser.name].sort().join("_");
     }
 
@@ -512,10 +636,12 @@ function App() {
         selectedUserId={selectedUserId}
         onSelectUser={handleUserSelect}
         currentUsername={username}
+        onSoulRoomClick={handleSoulRoomClick}
+        isSoulRoomActive={isSoulRoomActive}
       />
       <div className="main-content">
         <Header
-          channelName={selectedUserId ? selectedUser?.name : selectedChannel?.name}
+          channelName={isSoulRoomActive ? 'Soul Voice Room' : (selectedUserId ? selectedUser?.name : selectedChannel?.name)}
           onVideoCall={startVideoCall}
           onVoiceCall={startVoiceCall}
           onJoinVoice={() => setShowVoiceChannel(!showVoiceChannel)}
@@ -534,125 +660,222 @@ function App() {
           onSearch={() => setShowSearchModal(true)}
           onProfile={() => setShowProfileModal(true)}
           onLogout={handleLogout}
+          onNotificationSettings={() => setShowNotificationSettings(true)}
+          onAdmin={() => setShowAdminPanel(true)}
+          isAdmin={isAdmin}
           userAvatar={userAvatar}
           username={username}
           isChannel={!selectedUserId}
           isHost={selectedChannel?.host === username}
+          onSoulVoiceRoom={() => setShowSoulVoiceRoom(true)}
+          onSoulManager={() => setShowSoulManager(true)}
+          onSoulRecommendations={() => setShowSoulRecommendations(true)}
         />
-        <ChatArea
-          ref={chatAreaRef}
-          messages={displayMessages}
-          onSendMessage={handleSendMessage}
-          typingUsers={Array.from(typingUsers)}
-          onTyping={() => socket.emit("typing", { channelId: selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null), username })}
-          onStopTyping={() => socket.emit("stop_typing", { channelId: selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null), username })}
-          onLoadMore={() => {
-            if (displayMessages.length > 0) {
-              const oldestMessage = displayMessages[0];
-              if (oldestMessage.timestamp) {
-                socket.emit("load_more_messages", {
-                  channelId: selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null),
-                  beforeTimestamp: oldestMessage.timestamp
-                });
+        {!isSoulRoomActive && (
+          <ChatArea
+            ref={chatAreaRef}
+            messages={displayMessages}
+            onSendMessage={handleSendMessage}
+            typingUsers={Array.from(typingUsers)}
+            onTyping={() => socket.emit("typing", { channelId: selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null), username })}
+            onStopTyping={() => socket.emit("stop_typing", { channelId: selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null), username })}
+            onLoadMore={() => {
+              if (displayMessages.length > 0) {
+                const oldestMessage = displayMessages[0];
+                if (oldestMessage.timestamp) {
+                  socket.emit("load_more_messages", {
+                    channelId: selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null),
+                    beforeTimestamp: oldestMessage.timestamp
+                  });
+                }
               }
-            }
-          }}
-          onAddReaction={(messageId, emoji) => {
-            const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
-            socket.emit("add_reaction", { messageId, channelId, emoji, username });
-          }}
-          onRemoveReaction={(messageId, emoji) => {
-            const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
-            socket.emit("remove_reaction", { messageId, channelId, emoji, username });
-          }}
-          onDelete={(messageId) => {
-            const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
-            socket.emit("delete_message", { messageId, channelId, username });
-          }}
-          onEdit={(messageId, newText) => {
-            const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
-            socket.emit("edit_message", { messageId, channelId, username, newText });
-          }}
-          currentUser={username}
-        />
-        {isVideoCallActive && (
-          <VideoCall
-            socket={socket}
-            channelId={selectedUserId ? [username, selectedUser?.name].sort().join("_") : selectedChannelId}
-            username={username}
-            onClose={() => setIsVideoCallActive(false)}
-            isVoiceOnly={isVoiceCall}
+            }}
+            onAddReaction={(messageId, emoji) => {
+              const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
+              socket.emit("add_reaction", { messageId, channelId, emoji, username });
+            }}
+            onRemoveReaction={(messageId, emoji) => {
+              const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
+              socket.emit("remove_reaction", { messageId, channelId, emoji, username });
+            }}
+            onDelete={(messageId) => {
+              const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
+              socket.emit("delete_message", { messageId, channelId, username });
+            }}
+            onEdit={(messageId, newText) => {
+              const channelId = selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null);
+              socket.emit("edit_message", { messageId, channelId, username, newText });
+            }}
+            currentUser={username}
           />
+        )}
+        {isVideoCallActive && (
+          <Suspense fallback={<LoadingFallback />}>
+            <VideoCall
+              socket={socket}
+              channelId={selectedUserId ? [username, selectedUser?.name].sort().join("_") : selectedChannelId}
+              username={username}
+              onClose={() => setIsVideoCallActive(false)}
+              isVoiceOnly={isVoiceCall}
+            />
+          </Suspense>
         )}
 
         {incomingCall && (
-          <IncomingCallModal
-            callerName={incomingCall.from}
-            isVideoCall={incomingCall.isVideo}
-            onAccept={handleAcceptCall}
-            onDecline={handleDeclineCall}
-          />
+          <Suspense fallback={<LoadingFallback />}>
+            <IncomingCallModal
+              callerName={incomingCall.from}
+              isVideoCall={incomingCall.isVideo}
+              onAccept={handleAcceptCall}
+              onDecline={handleDeclineCall}
+            />
+          </Suspense>
         )}
 
         {showVoiceChannel && !selectedUserId && selectedChannelId && (
-          <VoiceChannel
-            socket={socket}
-            channelId={selectedChannelId}
-            username={username}
-            isHost={selectedChannel?.host === username}
-            isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
-          />
+          <Suspense fallback={<LoadingFallback />}>
+            <VoiceChannel
+              socket={socket}
+              channelId={selectedChannelId}
+              username={username}
+              isHost={selectedChannel?.host === username}
+              isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
+            />
+          </Suspense>
         )}
-      </div>
+        
+        {isSoulRoomActive && (
+          <Suspense fallback={<LoadingFallback />}>
+            <SoulVoiceRoom
+              socket={socket}
+              username={username}
+              onLeave={() => {
+                setShowSoulVoiceRoom(false);
+                setIsSoulRoomActive(false);
+              }}
+            />
+          </Suspense>
+        )}
+        
+        {showSoulManager && (
+          <div className="modal-overlay">
+            <div className="modal-content">
+              <Suspense fallback={<LoadingFallback />}>
+                <SoulRoomManager
+                  socket={socket}
+                  username={username}
+                />
+              </Suspense>
+              <button 
+                onClick={() => setShowSoulManager(false)}
+                className="close-modal-btn"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {showSoulRecommendations && (
+          <div className="modal-overlay">
+            <div className="modal-content">
+              <Suspense fallback={<LoadingFallback />}>
+                <SoulRecommendations
+                  socket={socket}
+                  username={username}
+                  onJoinRoom={(room) => {
+                    setShowSoulRecommendations(false);
+                    setShowSoulVoiceRoom(true);
+                  }}
+                />
+              </Suspense>
+              <button 
+                onClick={() => setShowSoulRecommendations(false)}
+                className="close-modal-btn"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}      </div>
 
       {!selectedUserId && selectedChannelId && (
-        <ChannelMembers
-          members={channelMembers}
-          currentUser={username}
-          isHost={selectedChannel?.host === username}
-          isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
-          onKickUser={handleKickUserFromMembers}
-          onMakeHost={handleMakeHost}
-          onMakeHostAssist={handleMakeHostAssist}
-        />
+        <Suspense fallback={<LoadingFallback />}>
+          <ChannelMembers
+            members={channelMembers}
+            currentUser={username}
+            isHost={selectedChannel?.host === username}
+            isHostAssist={channelMembers.find(m => m.username === username)?.isHostAssist || false}
+            onKickUser={handleKickUserFromMembers}
+            onMakeHost={handleMakeHost}
+            onMakeHostAssist={handleMakeHostAssist}
+          />
+        </Suspense>
       )}
 
       {showProfileModal && (
-        <ProfileModal
-          username={username}
-          currentAvatar={userAvatar}
-          onClose={() => setShowProfileModal(false)}
-          onAvatarUpdate={(url) => {
-            setUserAvatar(url);
-            // Save avatar to localStorage
-            localStorage.setItem('chatAppAvatar', url);
-            setShowProfileModal(false);
-          }}
-        />
+        <Suspense fallback={<LoadingFallback />}>
+          <ProfileModal
+            username={username}
+            currentAvatar={userAvatar}
+            onClose={() => setShowProfileModal(false)}
+            onAvatarUpdate={(url) => {
+              setUserAvatar(url);
+              // Save avatar to localStorage
+              localStorage.setItem('chatAppAvatar', url);
+              setShowProfileModal(false);
+            }}
+          />
+        </Suspense>
       )}
 
       {showSearchModal && (
-        <SearchModal
-          channelId={selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null)}
-          onClose={() => setShowSearchModal(false)}
-          onSelectMessage={(msg) => {
-            setShowSearchModal(false);
-            // Scroll to the selected message
-            if (chatAreaRef.current) {
-              chatAreaRef.current.scrollToMessage(msg.id);
-            }
-          }}
-        />
+        <Suspense fallback={<LoadingFallback />}>
+          <SearchModal
+            channelId={selectedChannelId || (selectedUserId ? [username, selectedUser?.name].sort().join("_") : null)}
+            onClose={() => setShowSearchModal(false)}
+            onSelectMessage={(msg) => {
+              setShowSearchModal(false);
+              // Scroll to the selected message
+              if (chatAreaRef.current) {
+                chatAreaRef.current.scrollToMessage(msg.id);
+              }
+            }}
+          />
+        </Suspense>
       )}
 
       {showInviteModal && (
-        <InviteUserModal
-          users={users}
-          onClose={() => setShowInviteModal(false)}
-          onInvite={handleInviteUserConfirm}
-        />
+        <Suspense fallback={<LoadingFallback />}>
+          <InviteUserModal
+            users={users}
+            onClose={() => setShowInviteModal(false)}
+            onInvite={handleInviteUserConfirm}
+          />
+        </Suspense>
       )}
-    </div>
+
+      {showNotificationSettings && (
+        <Suspense fallback={<LoadingFallback />}>
+          <NotificationSettings
+            onClose={() => setShowNotificationSettings(false)}
+            onSave={(settings) => {
+              console.log('Notification settings saved:', settings);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {showAdminPanel && (
+        <Suspense fallback={<LoadingFallback />}>
+          <AdminPanel
+            onClose={() => setShowAdminPanel(false)}
+            socket={socket}
+            currentUser={username}
+          />
+        </Suspense>
+      )}
+      </div>
   );
 }
 

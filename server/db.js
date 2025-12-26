@@ -48,7 +48,8 @@ export async function initializeDatabase() {
                 id SERIAL PRIMARY KEY,
                 username TEXT UNIQUE,
                 password TEXT,
-                avatar_url TEXT
+                avatar_url TEXT,
+                role TEXT DEFAULT 'user'
             );
 
             CREATE TABLE IF NOT EXISTS channels (
@@ -64,7 +65,9 @@ export async function initializeDatabase() {
                 sender TEXT,
                 text TEXT,
                 time TEXT,
-                timestamp BIGINT
+                timestamp BIGINT,
+                reply_to INTEGER,
+                thread_id INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS channel_invites (
@@ -131,6 +134,13 @@ export async function initializeDatabase() {
 
         // PostgreSQL-specific migrations (for existing databases)
         try {
+            await pgPool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'`);
+            console.log('PostgreSQL Migration: Added role column to users table');
+        } catch (e) {
+            console.log('PostgreSQL Migration: role column already exists or error:', e.message);
+        }
+
+        try {
             await pgPool.query(`ALTER TABLE channel_invites ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'member'`);
             console.log('PostgreSQL Migration: Added role column to channel_invites table');
         } catch (e) {
@@ -144,12 +154,33 @@ export async function initializeDatabase() {
             console.log('PostgreSQL Migration: status column already exists or error:', e.message);
         }
 
+        try {
+            await pgPool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to INTEGER`);
+            console.log('PostgreSQL Migration: Added reply_to column to messages table');
+        } catch (e) {
+            console.log('PostgreSQL Migration: reply_to column already exists or error:', e.message);
+        }
+
+        try {
+            await pgPool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS thread_id INTEGER`);
+            console.log('PostgreSQL Migration: Added thread_id column to messages table');
+        } catch (e) {
+            console.log('PostgreSQL Migration: thread_id column already exists or error:', e.message);
+        }
+
         console.log("PostgreSQL Database initialized");
 
-        // Create a wrapper to match SQLite API
+        // Create a wrapper to match SQLite API with secure parameterized queries
         // Convert SQLite ? placeholders to PostgreSQL $1, $2, $3...
+        // Input validation and proper escaping is handled by pg library
         db = {
             run: async (sql, ...params) => {
+                // Validate inputs to prevent injection
+                if (!sql || typeof sql !== 'string') {
+                    throw new Error('Invalid SQL query: query must be a non-empty string');
+                }
+
+                // Convert placeholders using proper escaping
                 let paramIndex = 1;
                 let pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
 
@@ -172,17 +203,34 @@ export async function initializeDatabase() {
                     }
                 }
 
+                // Use pg library's built-in parameterization for SQL injection prevention
                 await pgPool.query(pgSql, params);
             },
             get: async (sql, ...params) => {
+                // Validate inputs
+                if (!sql || typeof sql !== 'string') {
+                    throw new Error('Invalid SQL query: query must be a non-empty string');
+                }
+
+                // Convert placeholders
                 let paramIndex = 1;
                 const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+
+                // Use pg library's built-in parameterization
                 const result = await pgPool.query(pgSql, params);
                 return result.rows[0];
             },
             all: async (sql, ...params) => {
+                // Validate inputs
+                if (!sql || typeof sql !== 'string') {
+                    throw new Error('Invalid SQL query: query must be a non-empty string');
+                }
+
+                // Convert placeholders
                 let paramIndex = 1;
                 const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+
+                // Use pg library's built-in parameterization
                 const result = await pgPool.query(pgSql, params);
                 return result.rows;
             }
@@ -199,7 +247,8 @@ export async function initializeDatabase() {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE,
                 password TEXT,
-                avatar_url TEXT
+                avatar_url TEXT,
+                role TEXT DEFAULT 'user'
             );
 
             CREATE TABLE IF NOT EXISTS channels (
@@ -215,7 +264,9 @@ export async function initializeDatabase() {
                 sender TEXT,
                 text TEXT,
                 time TEXT,
-                timestamp INTEGER
+                timestamp INTEGER,
+                reply_to INTEGER,
+                thread_id INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS channel_invites (
@@ -262,12 +313,63 @@ export async function initializeDatabase() {
                 granted_at INTEGER,
                 PRIMARY KEY (channel_id, username)
             );
-        `);
+            
+            CREATE TABLE IF NOT EXISTS soul_voice_rooms (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                category TEXT NOT NULL,
+                host TEXT NOT NULL,
+                max_participants INTEGER DEFAULT 8,
+                is_private INTEGER DEFAULT 0,
+                password TEXT,
+                created_at INTEGER,
+                is_active INTEGER DEFAULT 1
+            );
+            
+            CREATE TABLE IF NOT EXISTS soul_room_participants (
+                room_id TEXT,
+                socket_id TEXT,
+                username TEXT,
+                joined_at INTEGER,
+                is_speaking INTEGER DEFAULT 0,
+                is_muted INTEGER DEFAULT 1,
+                PRIMARY KEY (room_id, socket_id),
+                FOREIGN KEY (room_id) REFERENCES soul_voice_rooms(id) ON DELETE CASCADE
+            );
+            
+            CREATE TABLE IF NOT EXISTS soul_room_gifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id TEXT,
+                from_username TEXT,
+                to_username TEXT,
+                gift_type TEXT,
+                timestamp INTEGER,
+                FOREIGN KEY (room_id) REFERENCES soul_voice_rooms(id) ON DELETE CASCADE
+            );
+            
+            CREATE TABLE IF NOT EXISTS soul_room_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id TEXT,
+                username TEXT,
+                message TEXT,
+                message_type TEXT DEFAULT 'text',
+                timestamp INTEGER,
+                FOREIGN KEY (room_id) REFERENCES soul_voice_rooms(id) ON DELETE CASCADE
+            );        `);
 
         // Migration: Add avatar_url column if it doesn't exist
         try {
             await db.run('ALTER TABLE users ADD COLUMN avatar_url TEXT');
             console.log('Migration: Added avatar_url column to users table');
+        } catch (e) {
+            // Column already exists, ignore error
+        }
+
+        // Migration: Add role column to users table if it doesn't exist
+        try {
+            await db.run('ALTER TABLE users ADD COLUMN role TEXT DEFAULT \'user\'');
+            console.log('Migration: Added role column to users table');
         } catch (e) {
             // Column already exists, ignore error
         }
@@ -284,6 +386,21 @@ export async function initializeDatabase() {
         try {
             await db.run('ALTER TABLE channel_invites ADD COLUMN status TEXT DEFAULT \'invited\'');
             console.log('Migration: Added status column to channel_invites table');
+        } catch (e) {
+            // Column already exists, ignore error
+        }
+
+        // Migration: Add reply_to and thread_id columns to messages table
+        try {
+            await db.run('ALTER TABLE messages ADD COLUMN reply_to INTEGER');
+            console.log('Migration: Added reply_to column to messages table');
+        } catch (e) {
+            // Column already exists, ignore error
+        }
+
+        try {
+            await db.run('ALTER TABLE messages ADD COLUMN thread_id INTEGER');
+            console.log('Migration: Added thread_id column to messages table');
         } catch (e) {
             // Column already exists, ignore error
         }

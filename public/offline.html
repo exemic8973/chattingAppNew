@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>You are Offline - Chat App</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 20px;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 500px;
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.1);
+            }
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+            font-weight: 700;
+        }
+
+        p {
+            font-size: 1.1rem;
+            margin-bottom: 30px;
+            opacity: 0.9;
+            line-height: 1.6;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 15px 40px;
+            background: white;
+            color: #667eea;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .info {
+            margin-top: 40px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        .info h3 {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+        }
+
+        .info ul {
+            list-style: none;
+            text-align: left;
+        }
+
+        .info li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+
+        .info li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: #4ade80;
+        }
+
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 2rem;
+            }
+
+            .icon {
+                font-size: 60px;
+            }
+
+            .container {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">📡</div>
+        <h1>You're Offline</h1>
+        <p>It looks like you've lost your internet connection. Don't worry - your messages will be synced when you're back online!</p>
+        <button class="button" onclick="window.location.reload()">
+            Try Again
+        </button>
+        
+        <div class="info">
+            <h3>What's Available Offline:</h3>
+            <ul>
+                <li>View previously loaded messages</li>
+                <li>Access cached channels</li>
+                <li>Read your message history</li>
+                <li>Messages will sync automatically</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Listen for online status
+        window.addEventListener('online', () => {
+            console.log('Connection restored!');
+            window.location.reload();
+        });
+
+        window.addEventListener('offline', () => {
+            console.log('Connection lost!');
+        });
+
+        // Auto-retry every 5 seconds
+        let retryCount = 0;
+        const maxRetries = 12; // 1 minute total
+
+        const retryInterval = setInterval(() => {
+            retryCount++;
+            if (retryCount >= maxRetries) {
+                clearInterval(retryInterval);
+            } else if (navigator.onLine) {
+                clearInterval(retryInterval);
+                window.location.reload();
+            }
+        }, 5000);
+    </script>
+</body>
+</html>

@@ -3,7 +3,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useI18n } from '../i18n/I18nContext';
 import LanguageSwitcher from './LanguageSwitcher';
 
-const Header = ({ channelName, onVideoCall, onVoiceCall, onJoinVoice, showVoiceChannel, onInviteUser, onLeaveChannel, onKickUser, onDeleteChannel, onSearch, onProfile, onLogout, userAvatar, username, isChannel, isHost }) => {
+const Header = ({ channelName, onVideoCall, onVoiceCall, onJoinVoice, showVoiceChannel, onInviteUser, onLeaveChannel, onKickUser, onDeleteChannel, onSearch, onProfile, onLogout, onNotificationSettings, userAvatar, username, isChannel, isHost, onSoulVoiceRoom, onSoulManager, onSoulRecommendations, onAdmin, isAdmin }) => {
     const { isDarkMode, toggleTheme } = useTheme();
     const { t } = useI18n();
 
@@ -100,6 +100,59 @@ const Header = ({ channelName, onVideoCall, onVoiceCall, onJoinVoice, showVoiceC
                 >
                     {!userAvatar && username?.[0]?.toUpperCase()}
                 </div>
+                {isAdmin && (
+                    <button
+                        className="action-btn"
+                        onClick={onAdmin}
+                        title={t('header.adminPanel')}
+                        style={{ color: '#9b59b6' }}
+                    >
+                        🔧
+                    </button>
+                )}
+                <button
+                    className="action-btn"
+                    onClick={onNotificationSettings}
+                    title={t('notifications.title', 'Notification Settings')}
+                >
+                    🔔
+                </button>
+                {onSoulVoiceRoom && (
+                    <button className="header-btn soul-btn" onClick={onSoulVoiceRoom} title="Soul Voice Rooms">
+                      🎭
+                    </button>
+                  )}
+                  {onSoulRecommendations && (
+                    <button className="header-btn soul-btn" onClick={onSoulRecommendations} title="Discover Rooms">
+                      🌟
+                    </button>
+                  )}
+                  {onSoulManager && (
+                    <button className="header-btn soul-btn" onClick={onSoulManager} title="My Soul Rooms">
+                      🏠
+                    </button>
+                  )}
+                <button
+                    className="action-btn"
+                    onClick={onSoulVoiceRoom}
+                    title="Soul Voice Room"
+                >
+                    🎵
+                </button>
+                <button
+                    className="action-btn"
+                    onClick={onSoulManager}
+                    title="Soul Manager"
+                >
+                    👥
+                </button>
+                <button
+                    className="action-btn"
+                    onClick={onSoulRecommendations}
+                    title="Soul Recommendations"
+                >
+                    💡
+                </button>
                 <button
                     className="action-btn"
                     onClick={onLogout}

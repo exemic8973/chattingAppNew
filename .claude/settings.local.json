@@ -17,7 +17,15 @@
       "Bash(curl:*)",
       "Bash(netstat:*)",
       "Bash(findstr:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(git rm:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(cat:*)",
+      "Bash(powershell \"Stop-Process -Id 27576 -Force\")",
+      "Bash(powershell \"Stop-Process -Id 37340 -Force\")",
+      "Bash(grep -r \"simple-peer\\|RTCPeerConnection\" c:Userswei89AI-projectschattingAppNewsrc c:Userswei89AI-projectschattingAppNewserver --include=*.js --include=*.jsx)",
+      "Bash(find:*)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []

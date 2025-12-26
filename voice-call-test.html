@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Call Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #2a2a2a;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background: #28a745; }
+        .error { background: #dc3545; }
+        .info { background: #17a2b8; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        .log {
+            background: #000;
+            padding: 10px;
+            border-radius: 4px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎤 Voice Call Test</h1>
+    
+    <div class="test-section">
+        <h2>1. Microphone Access Test</h2>
+        <button id="testMic">Test Microphone Access</button>
+        <div id="micStatus" class="status info">Not tested</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>2. Socket Connection Test</h2>
+        <button id="testSocket">Test Socket Connection</button>
+        <div id="socketStatus" class="status info">Not connected</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>3. Voice Channel Join Test</h2>
+        <button id="testVoiceJoin" disabled>Join Voice Channel</button>
+        <div id="voiceStatus" class="status info">Not tested</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>4. Video Call Test</h2>
+        <button id="testVideoCall" disabled>Start Video Call Test</button>
+        <div id="videoStatus" class="status info">Not tested</div>
+        <video id="localVideo" muted style="width: 200px; height: 150px; background: #333; margin: 10px 0;"></video>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Log</h2>
+        <div id="log" class="log"></div>
+        <button id="clearLog">Clear Log</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let socket = null;
+        let localStream = null;
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+        
+        // Test 1: Microphone Access
+        document.getElementById('testMic').addEventListener('click', async () => {
+            const button = document.getElementById('testMic');
+            button.disabled = true;
+            updateStatus('micStatus', 'Testing...', 'info');
+            
+            try {
+                log('Requesting microphone access...');
+                
+                // Test audio-only
+                const audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: true, 
+                    video: false 
+                });
+                
+                log('✅ Microphone access granted (audio-only)');
+                
+                // Stop the test stream
+                audioStream.getTracks().forEach(track => track.stop());
+                
+                // Test video+audio
+                const videoStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: true, 
+                    video: true 
+                });
+                
+                log('✅ Camera and microphone access granted');
+                
+                // Stop the test stream
+                videoStream.getTracks().forEach(track => track.stop());
+                
+                updateStatus('micStatus', '✅ All media access working', 'success');
+                
+            } catch (error) {
+                log(`❌ Media access error: ${error.message}`);
+                updateStatus('micStatus', `❌ Error: ${error.message}`, 'error');
+            }
+            
+            button.disabled = false;
+        });
+        
+        // Test 2: Socket Connection
+        document.getElementById('testSocket').addEventListener('click', () => {
+            const button = document.getElementById('testSocket');
+            button.disabled = true;
+            updateStatus('socketStatus', 'Connecting...', 'info');
+            
+            try {
+                socket = io('https://localhost:3001', {
+                    secure: false,
+                    rejectUnauthorized: false
+                });
+                
+                socket.on('connect', () => {
+                    log('✅ Socket connected successfully');
+                    updateStatus('socketStatus', '✅ Connected', 'success');
+                    
+                    // Enable next tests
+                    document.getElementById('testVoiceJoin').disabled = false;
+                    document.getElementById('testVideoCall').disabled = false;
+                    button.disabled = false;
+                });
+                
+                socket.on('disconnect', () => {
+                    log('❌ Socket disconnected');
+                    updateStatus('socketStatus', '❌ Disconnected', 'error');
+                    
+                    // Disable next tests
+                    document.getElementById('testVoiceJoin').disabled = true;
+                    document.getElementById('testVideoCall').disabled = true;
+                });
+                
+                socket.on('connect_error', (error) => {
+                    log(`❌ Socket connection error: ${error.message}`);
+                    updateStatus('socketStatus', `❌ Error: ${error.message}`, 'error');
+                    button.disabled = false;
+                });
+                
+            } catch (error) {
+                log(`❌ Socket initialization error: ${error.message}`);
+                updateStatus('socketStatus', `❌ Error: ${error.message}`, 'error');
+                button.disabled = false;
+            }
+        });
+        
+        // Test 3: Voice Channel Join
+        document.getElementById('testVoiceJoin').addEventListener('click', () => {
+            if (!socket || !socket.connected) {
+                log('❌ Socket not connected');
+                return;
+            }
+            
+            const button = document.getElementById('testVoiceJoin');
+            button.disabled = true;
+            updateStatus('voiceStatus', 'Joining voice channel...', 'info');
+            
+            const testChannelId = 'test-voice-channel';
+            const testUsername = 'test-user-' + Math.random().toString(36).substr(2, 9);
+            
+            // Listen for voice events
+            socket.on('voice_user_joined', (data) => {
+                log(`✅ Voice user joined event received: ${JSON.stringify(data)}`);
+                updateStatus('voiceStatus', '✅ Voice channel working', 'success');
+                button.disabled = false;
+            });
+            
+            socket.on('voice_error', (data) => {
+                log(`❌ Voice error: ${data.message}`);
+                updateStatus('voiceStatus', `❌ Error: ${data.message}`, 'error');
+                button.disabled = false;
+            });
+            
+            // Join voice channel
+            log(`Joining voice channel: ${testChannelId} as ${testUsername}`);
+            socket.emit('join_voice', {
+                channelId: testChannelId,
+                username: testUsername
+            });
+            
+            // Timeout after 5 seconds
+            setTimeout(() => {
+                if (button.disabled) {
+                    log('⚠️ Voice channel test timed out');
+                    updateStatus('voiceStatus', '⚠️ Test timed out', 'error');
+                    button.disabled = false;
+                }
+            }, 5000);
+        });
+        
+        // Test 4: Video Call Signaling
+        document.getElementById('testVideoCall').addEventListener('click', async () => {
+            if (!socket || !socket.connected) {
+                log('❌ Socket not connected');
+                return;
+            }
+            
+            const button = document.getElementById('testVideoCall');
+            button.disabled = true;
+            updateStatus('videoStatus', 'Testing video call...', 'info');
+            
+            try {
+                // Get user media
+                log('Getting user media for video call test...');
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: true, 
+                    video: true 
+                });
+                
+                // Show local video
+                const localVideo = document.getElementById('localVideo');
+                localVideo.srcObject = localStream;
+                
+                log('✅ Local media stream obtained');
+                
+                const testChannelId = 'test-video-channel';
+                
+                // Listen for video events
+                socket.on('all_users', (users) => {
+                    log(`✅ All users event received: ${JSON.stringify(users)}`);
+                    updateStatus('videoStatus', '✅ Video call signaling working', 'success');
+                    button.disabled = false;
+                });
+                
+                socket.on('call_received', (data) => {
+                    log(`✅ Call received event: ${JSON.stringify(data)}`);
+                });
+                
+                socket.on('call_answered', (data) => {
+                    log(`✅ Call answered event: ${JSON.stringify(data)}`);
+                });
+                
+                socket.on('ice_candidate_received', (data) => {
+                    log(`✅ ICE candidate received: ${JSON.stringify(data)}`);
+                });
+                
+                // Join video room
+                log(`Joining video channel: ${testChannelId}`);
+                socket.emit('join_video', testChannelId);
+                
+                // Timeout after 5 seconds
+                setTimeout(() => {
+                    if (button.disabled) {
+                        log('⚠️ Video call test timed out');
+                        updateStatus('videoStatus', '⚠️ Test timed out', 'error');
+                        cleanup();
+                        button.disabled = false;
+                    }
+                }, 5000);
+                
+            } catch (error) {
+                log(`❌ Video call error: ${error.message}`);
+                updateStatus('videoStatus', `❌ Error: ${error.message}`, 'error');
+                cleanup();
+                button.disabled = false;
+            }
+        });
+        
+        function cleanup() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            const localVideo = document.getElementById('localVideo');
+            localVideo.srcObject = null;
+        }
+        
+        // Clear log
+        document.getElementById('clearLog').addEventListener('click', () => {
+            document.getElementById('log').innerHTML = '';
+        });
+        
+        // Initial log
+        log('Voice Call Test Page Loaded');
+        log('Note: This test requires HTTPS or localhost for camera/microphone access');
+    </script>
+</body>
+</html>

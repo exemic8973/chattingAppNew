@@ -353,6 +353,329 @@ body {
   }
 }
 
+/* Soul Voice Room Styles */
+.soul-btn {
+  background: linear-gradient(45deg, #FF6B6B, #4ECDC4) !important;
+  animation: soul-pulse 2s infinite;
+}
+
+.soul-btn:hover {
+  transform: scale(1.1) !important;
+}
+
+@keyframes soul-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 107, 107, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0);
+  }
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+
+.modal-content {
+  position: relative;
+  background: white;
+  border-radius: 20px;
+  max-width: 95vw;
+  max-height: 95vh;
+  overflow: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.close-modal-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(0, 0, 0, 0.1);
+  border: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.2rem;
+  transition: all 0.3s ease;
+  z-index: 10;
+}
+
+.close-modal-btn:hover {
+  background: rgba(0, 0, 0, 0.2);
+  transform: scale(1.1);
+}
+
+/* Mobile-specific CSS */
+.mobile {
+  /* Prevent text selection on mobile for better UX */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  
+  /* Prevent callout on long press */
+  -webkit-touch-callout: none;
+  
+  /* Prevent highlight on tap */
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile input,
+.mobile textarea,
+.mobile [contenteditable] {
+  /* Allow text selection in inputs */
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Mobile touch targets */
+.mobile button,
+.mobile .clickable,
+.mobile .sidebar-item {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 12px;
+}
+
+/* Mobile sidebar */
+.mobile .sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100vh;
+  width: 280px;
+  z-index: 1002;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+}
+
+.mobile .sidebar.open {
+  transform: translateX(0);
+}
+
+.mobile .main-content {
+  margin-left: 0;
+  width: 100%;
+}
+
+/* Mobile chat area */
+.mobile .chat-area {
+  height: calc(100vh - 60px); /* Account for mobile header */
+}
+
+.mobile .message-input-container {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  border-top: var(--glass-border);
+  padding: 1rem;
+  z-index: 100;
+}
+
+.mobile.virtual-keyboard-open .message-input-container {
+  bottom: 0;
+}
+
+.mobile .message-input-container input {
+  font-size: 16px; /* Prevent zoom on iOS */
+}
+
+/* Mobile message bubbles */
+.mobile .message {
+  margin-bottom: 1rem;
+}
+
+.mobile .message-bubble {
+  max-width: 85%;
+  word-wrap: break-word;
+}
+
+.mobile .message.own .message-bubble {
+  margin-left: auto;
+}
+
+/* Mobile header */
+.mobile .header {
+  height: 60px;
+  padding: 0.5rem 1rem;
+}
+
+.mobile .header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.mobile .header-actions button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.5rem;
+}
+
+/* Mobile modals */
+.mobile .modal-overlay {
+  padding: 1rem;
+}
+
+.mobile .modal-content {
+  max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Mobile notifications */
+.mobile .pwa-install-prompt,
+.mobile .pwa-update-notification {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  margin: 1rem;
+  border-radius: var(--radius-lg);
+  z-index: 1003;
+}
+
+/* Tablet-specific styles */
+.tablet .sidebar {
+  width: 320px;
+}
+
+.tablet .main-content {
+  margin-left: 320px;
+}
+
+.tablet .chat-area {
+  height: calc(100vh - 70px);
+}
+
+/* Touch-specific enhancements */
+.touch .scrollable {
+  -webkit-overflow-scrolling: touch;
+  overflow-scrolling: touch;
+}
+
+.touch .button {
+  touch-action: manipulation;
+}
+
+/* Mobile performance optimizations */
+.mobile * {
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  -webkit-perspective: 1000;
+  perspective: 1000;
+}
+
+/* Mobile landscape adjustments */
+.mobile.landscape .chat-area {
+  height: calc(100vh - 50px);
+}
+
+.mobile.landscape .message-input-container {
+  padding: 0.5rem;
+}
+
+/* Mobile portrait adjustments */
+.mobile.portrait .sidebar {
+  width: 85vw;
+  max-width: 320px;
+}
+
+/* iOS-specific fixes */
+.mobile.ios .message-input-container {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.mobile.ios .header {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Android-specific fixes */
+.mobile.android .message-input-container {
+  padding-bottom: 8px;
+}
+
+/* Mobile accessibility */
+.mobile button:focus,
+.mobile .clickable:focus {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+/* Mobile animations */
+.mobile .sidebar {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mobile .modal-overlay {
+  animation: slideUp 0.3s ease-out;
+}
+
+.mobile .message {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Mobile loading states */
+.mobile .loading-spinner {
+  padding: 2rem;
+  text-align: center;
+}
+
+/* Mobile error states */
+.mobile .error-message {
+  padding: 1rem;
+  margin: 1rem;
+  border-radius: var(--radius-md);
+  background: rgba(220, 53, 69, 0.1);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  color: #ff6b6b;
+}
+
+/* Responsive breakpoints */
+@media (max-width: 480px) {
+  .mobile .message-bubble {
+    max-width: 90%;
+  }
+  
+  .mobile .header {
+    height: 50px;
+    padding: 0.5rem;
+  }
+  
+  .mobile .message-input-container {
+    padding: 0.75rem;
+  }
+}
+
+@media (max-width: 320px) {
+  .mobile .sidebar {
+    width: 100vw;
+  }
+  
+  .mobile .message-bubble {
+    max-width: 95%;
+  }
+}
+
 .section-title {
   padding: 0 10px;
   margin-bottom: 5px;

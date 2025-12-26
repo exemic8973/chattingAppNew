@@ -1,13 +1,58 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { Socket } from 'socket.io-client';
 
-const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
-    const [peers, setPeers] = useState([]); // Array of { peerId, stream }
-    const [stream, setStream] = useState(null);
-    const [error, setError] = useState("");
+// Type definitions
+interface Peer {
+    peerId: string;
+    stream: MediaStream | null;
+}
 
-    const myVideo = useRef();
-    const peersRef = useRef([]); // Array of { peerId, peer }
-    const streamRef = useRef(null); // Store stream in ref for cleanup
+interface PeerConnection {
+    peerId: string;
+    peer: RTCPeerConnection;
+}
+
+interface VideoCallProps {
+    socket: Socket;
+    channelId: string;
+    username: string;
+    onClose: () => void;
+    isVoiceOnly: boolean;
+}
+
+interface VideoProps {
+    peer: Peer;
+    isVoiceOnly: boolean;
+}
+
+// Socket event payload types
+interface AllUsersPayload {
+    users: string[];
+}
+
+interface CallReceivedPayload {
+    signal: RTCSessionDescriptionInit;
+    from: string;
+}
+
+interface CallAnsweredPayload {
+    signal: RTCSessionDescriptionInit;
+    from: string;
+}
+
+interface IceCandidateReceivedPayload {
+    candidate: RTCIceCandidateInit;
+    from: string;
+}
+
+const VideoCall: React.FC<VideoCallProps> = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
+    const [peers, setPeers] = useState<Peer[]>([]);
+    const [stream, setStream] = useState<MediaStream | null>(null);
+    const [error, setError] = useState<string>("");
+
+    const myVideo = useRef<HTMLVideoElement>(null);
+    const peersRef = useRef<PeerConnection[]>([]);
+    const streamRef = useRef<MediaStream | null>(null);
 
     useEffect(() => {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -16,8 +61,8 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
         }
 
         navigator.mediaDevices.getUserMedia({ video: !isVoiceOnly, audio: true })
-            .then((currentStream) => {
-                streamRef.current = currentStream; // Store in ref for reliable cleanup
+            .then((currentStream: MediaStream) => {
+                streamRef.current = currentStream;
                 setStream(currentStream);
                 if (myVideo.current && !isVoiceOnly) {
                     myVideo.current.srcObject = currentStream;
@@ -27,47 +72,47 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
                 socket.emit("join_video", channelId);
 
                 // Receive list of existing users
-                socket.on("all_users", (users) => {
-                    const peers = [];
-                    users.forEach(userID => {
+                socket.on("all_users", (users: string[]) => {
+                    const newPeers: Peer[] = [];
+                    users.forEach((userID: string) => {
                         const peer = createPeer(userID, socket.id, currentStream);
                         peersRef.current.push({
                             peerId: userID,
                             peer,
                         });
-                        peers.push({
+                        newPeers.push({
                             peerId: userID,
-                            stream: null // Stream will be added on track event
+                            stream: null
                         });
                     });
-                    setPeers(peers);
+                    setPeers(newPeers);
                 });
 
                 // Handle incoming call (someone joined after us)
-                socket.on("call_received", (payload) => {
+                socket.on("call_received", (payload: CallReceivedPayload) => {
                     const peer = addPeer(payload.signal, payload.from, currentStream);
                     peersRef.current.push({
                         peerId: payload.from,
                         peer,
                     });
-                    setPeers(users => [...users, { peerId: payload.from, stream: null }]);
+                    setPeers((users: Peer[]) => [...users, { peerId: payload.from, stream: null }]);
                 });
 
-                socket.on("call_answered", (payload) => {
+                socket.on("call_answered", (payload: CallAnsweredPayload) => {
                     const item = peersRef.current.find(p => p.peerId === payload.from);
                     if (item) {
                         item.peer.signal(payload.signal);
                     }
                 });
 
-                socket.on("ice_candidate_received", (payload) => {
+                socket.on("ice_candidate_received", (payload: IceCandidateReceivedPayload) => {
                     const item = peersRef.current.find(p => p.peerId === payload.from);
                     if (item) {
                         item.peer.addIceCandidate(payload.candidate).catch(e => console.error("Error adding ice candidate", e));
                     }
                 });
             })
-            .catch((err) => {
+            .catch((err: Error) => {
                 console.error("Error accessing media devices:", err);
                 setError("Could not access media devices. Please check permissions.");
             });
@@ -95,14 +140,14 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
             });
             peersRef.current = [];
         };
-    }, [channelId, isVoiceOnly]);
+    }, [channelId, isVoiceOnly, socket]);
 
-    function createPeer(userToCall, callerID, stream) {
+    function createPeer(userToCall: string, callerID: string, stream: MediaStream): RTCPeerConnection {
         const peer = new RTCPeerConnection({
             iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
         });
 
-        peer.onicecandidate = (event) => {
+        peer.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
             if (event.candidate) {
                 socket.emit("ice_candidate", {
                     to: userToCall,
@@ -112,8 +157,8 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
             }
         };
 
-        peer.ontrack = (event) => {
-            setPeers(users => users.map(user => {
+        peer.ontrack = (event: RTCTrackEvent) => {
+            setPeers((users: Peer[]) => users.map((user: Peer) => {
                 if (user.peerId === userToCall) {
                     return { ...user, stream: event.streams[0] };
                 }
@@ -135,12 +180,12 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
         return peer;
     }
 
-    function addPeer(incomingSignal, callerID, stream) {
+    function addPeer(incomingSignal: RTCSessionDescriptionInit, callerID: string, stream: MediaStream): RTCPeerConnection {
         const peer = new RTCPeerConnection({
             iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
         });
 
-        peer.onicecandidate = (event) => {
+        peer.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
             if (event.candidate) {
                 socket.emit("ice_candidate", {
                     to: callerID,
@@ -150,8 +195,8 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
             }
         };
 
-        peer.ontrack = (event) => {
-            setPeers(users => users.map(user => {
+        peer.ontrack = (event: RTCTrackEvent) => {
+            setPeers((users: Peer[]) => users.map((user: Peer) => {
                 if (user.peerId === callerID) {
                     return { ...user, stream: event.streams[0] };
                 }
@@ -159,11 +204,11 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
             }));
         };
 
-        peer.signal = (signal) => {
+        peer.signal = (signal: RTCSessionDescriptionInit) => {
             peer.setRemoteDescription(new RTCSessionDescription(signal));
         };
 
-        peer.addIceCandidate = (candidate) => {
+        peer.addIceCandidate = (candidate: RTCIceCandidateInit): Promise<void> => {
             return peer.addIceCandidate(candidate);
         }
 
@@ -171,7 +216,7 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
 
         peer.setRemoteDescription(new RTCSessionDescription(incomingSignal)).then(() => {
             return peer.createAnswer();
-        }).then(answer => {
+        }).then((answer: RTCSessionDescriptionInit) => {
             peer.setLocalDescription(answer);
             socket.emit("answer_call", {
                 signal: answer,
@@ -232,9 +277,9 @@ const VideoCall = ({ socket, channelId, username, onClose, isVoiceOnly }) => {
     );
 };
 
-const Video = ({ peer, isVoiceOnly }) => {
-    const videoRef = useRef();
-    const audioRef = useRef();
+const Video: React.FC<VideoProps> = ({ peer, isVoiceOnly }) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const audioRef = useRef<HTMLAudioElement>(null);
 
     useEffect(() => {
         if (peer.stream) {

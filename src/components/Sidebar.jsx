@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useI18n } from '../i18n/I18nContext';
 
-const Sidebar = ({ teams, selectedTeamId, selectedChannelId, onSelectChannel, onCreateChannel, users, selectedUserId, onSelectUser, currentUsername }) => {
+const Sidebar = ({ teams, selectedTeamId, selectedChannelId, onSelectChannel, onCreateChannel, users, selectedUserId, onSelectUser, currentUsername, onSoulRoomClick, isSoulRoomActive }) => {
     const { t } = useI18n();
     const selectedTeam = teams.find(t => t.id === selectedTeamId);
 
@@ -88,6 +88,22 @@ const Sidebar = ({ teams, selectedTeamId, selectedChannelId, onSelectChannel, on
                         )) : (
                             <li className="sidebar-item empty-state">{t('sidebar.noOtherUsers')}</li>
                         )}
+                    </ul>
+                </div>
+
+                <div className="sidebar-section">
+                    <div className="section-title">
+                        <span>🎭 Soul Rooms</span>
+                    </div>
+                    <ul>
+                        <li
+                            className={`sidebar-item ${isSoulRoomActive ? 'active' : ''}`}
+                            onClick={onSoulRoomClick}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                        >
+                            <span style={{ fontSize: '1.2rem' }}>🎙️</span>
+                            Voice Rooms
+                        </li>
                     </ul>
                 </div>
             </div>
